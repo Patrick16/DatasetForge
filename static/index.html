@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DatasetForge</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="top-bar">
+      <div>
+        <h1>DatasetForge</h1>
+        <p class="sub">Download images from the web by search query into a local folder, with optional LLM query expansion and vision captioning.</p>
+      </div>
+      <div class="top-bar-actions">
+        <button type="button" id="unload-models-btn">&#129529; Unload models from memory</button>
+        <div class="hint" id="unload-models-hint"></div>
+      </div>
+    </div>
+
+    <form id="job-form">
+      <section class="card">
+        <h2>Queries</h2>
+        <label>Search queries (one per line)</label>
+        <textarea id="queries" rows="4" placeholder="cat on a windowsill&#10;mountains at sunset&#10;coffee cup on a table" required></textarea>
+
+        <div class="query-actions">
+          <button type="button" id="generate-btn" disabled>&#10024; Generate variations with LLM</button>
+          <span class="hint" id="generate-hint"></span>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Images per query</label>
+            <input type="number" id="n_per_query" value="10" min="1" max="200" required />
+          </div>
+          <div class="field">
+            <label>Parallel downloads</label>
+            <input type="number" id="concurrency" value="8" min="1" max="32" required />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Save to folder</label>
+          <div class="input-with-button">
+            <input type="text" id="output_folder" placeholder="C:\Users\me\Pictures\downloaded" required />
+            <button type="button" class="browse-btn" data-target="output_folder" data-title="Select download folder">Browse&hellip;</button>
+          </div>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="query_subfolders" checked />
+          Create a subfolder for each query
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Filters</h2>
+        <div class="row">
+          <div class="field">
+            <label>Min. width (px)</label>
+            <input type="number" id="min_width" value="200" min="0" />
+          </div>
+          <div class="field">
+            <label>Min. height (px)</label>
+            <input type="number" id="min_height" value="200" min="0" />
+          </div>
+        </div>
+        <label>Allowed formats</label>
+        <div class="formats" id="formats">
+          <label><input type="checkbox" value="jpg" checked /> jpg</label>
+          <label><input type="checkbox" value="png" checked /> png</label>
+          <label><input type="checkbox" value="webp" checked /> webp</label>
+          <label><input type="checkbox" value="gif" /> gif</label>
+          <label><input type="checkbox" value="bmp" /> bmp</label>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="block-header">
+          <label class="checkbox-row inline">
+            <input type="checkbox" id="llm_enabled" />
+            Query expansion (LLM)
+          </label>
+        </div>
+        <details class="settings-details">
+          <summary>Settings</summary>
+          <div id="llm_block" class="llm-block">
+            <div class="row">
+              <div class="field">
+                <label>Provider</label>
+                <select id="llm_provider">
+                  <option value="ollama">Ollama (local)</option>
+                  <option value="lmstudio">LM Studio (local)</option>
+                  <option value="cloud">Cloud API</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Variations per query</label>
+                <input type="number" id="llm_variations" value="3" min="1" max="20" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Base URL</label>
+              <input type="text" id="llm_base_url" value="http://localhost:11434/v1" />
+            </div>
+            <div class="field">
+              <label>Model</label>
+              <div class="input-with-button">
+                <input type="text" id="llm_model" value="qwen2.5:1.5b-instruct" list="llm_model_list" />
+                <button type="button" class="refresh-btn" data-kind="llm">&#8635; Refresh</button>
+              </div>
+              <datalist id="llm_model_list"></datalist>
+              <div class="hint" id="llm_model_hint"></div>
+            </div>
+            <div class="field">
+              <label>Models folder <span class="optional">(optional — scanned for .gguf files as a fallback if the server above isn't reachable)</span></label>
+              <div class="input-with-button">
+                <input type="text" id="llm_models_folder" placeholder="C:\path\to\your\models" />
+                <button type="button" class="browse-btn" data-target="llm_models_folder" data-title="Select models folder">Browse&hellip;</button>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>API key <span class="optional">(cloud provider only)</span></label>
+                <input type="password" id="llm_api_key" placeholder="sk-..." />
+              </div>
+              <div class="field">
+                <label>Response timeout (sec)</label>
+                <input type="number" id="llm_timeout" value="180" min="5" max="600" />
+              </div>
+            </div>
+            <label class="checkbox-row">
+              <input type="checkbox" id="llm_disable_reasoning" />
+              Disable reasoning/thinking mode <span class="optional">(local llama.cpp servers only — see hint)</span>
+            </label>
+            <p class="card-note">Some local "thinking" models spend their whole reply budget on hidden reasoning and never actually answer. This tricks llama.cpp-based servers (LM Studio, text-generation-webui, koboldcpp) into skipping it — not guaranteed to work on Ollama or cloud APIs.</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+        <div class="block-header">
+          <label class="checkbox-row inline">
+            <input type="checkbox" id="cap_enabled" />
+            Image captioning (vision LLM)
+          </label>
+        </div>
+        <details class="settings-details">
+          <summary>Settings</summary>
+          <div id="cap_block" class="llm-block">
+            <div class="field">
+              <label>Provider</label>
+              <select id="cap_provider">
+                <option value="ollama">Ollama (local)</option>
+                <option value="lmstudio">LM Studio (local)</option>
+                <option value="cloud">Cloud API</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Base URL</label>
+              <input type="text" id="cap_base_url" value="http://localhost:11434/v1" />
+            </div>
+            <div class="field">
+              <label>Model <span class="optional">(needs vision support)</span></label>
+              <div class="input-with-button">
+                <input type="text" id="cap_model" value="moondream" list="cap_model_list" />
+                <button type="button" class="refresh-btn" data-kind="cap">&#8635; Refresh</button>
+              </div>
+              <datalist id="cap_model_list"></datalist>
+              <div class="hint" id="cap_model_hint"></div>
+            </div>
+            <div class="field">
+              <label>Models folder <span class="optional">(optional — scanned for .gguf files as a fallback if the server above isn't reachable)</span></label>
+              <div class="input-with-button">
+                <input type="text" id="cap_models_folder" placeholder="C:\path\to\your\models" />
+                <button type="button" class="browse-btn" data-target="cap_models_folder" data-title="Select models folder">Browse&hellip;</button>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>API key <span class="optional">(cloud provider only)</span></label>
+                <input type="password" id="cap_api_key" placeholder="sk-..." />
+              </div>
+              <div class="field">
+                <label>Response timeout (sec)</label>
+                <input type="number" id="cap_timeout" value="180" min="5" max="600" />
+              </div>
+            </div>
+            <label class="checkbox-row">
+              <input type="checkbox" id="cap_disable_reasoning" />
+              Disable reasoning/thinking mode <span class="optional">(local llama.cpp servers only — see hint)</span>
+            </label>
+            <p class="card-note">Some local "thinking" vision models spend their whole reply budget on hidden reasoning instead of a caption. This tricks llama.cpp-based servers (LM Studio, text-generation-webui, koboldcpp) into skipping it — not guaranteed to work on Ollama or cloud APIs.</p>
+          </div>
+        </details>
+
+        <div class="folder-caption-block">
+          <h3>Caption an existing folder</h3>
+          <p class="card-note">Captions every image already in a folder, independent of any download above — uses the vision LLM settings from "Settings" above.</p>
+
+          <div class="field">
+            <label>Folder to caption</label>
+            <div class="input-with-button">
+              <input type="text" id="capfolder_path" placeholder="C:\path\to\images" />
+              <button type="button" class="browse-btn" data-target="capfolder_path" data-title="Select folder to caption">Browse&hellip;</button>
+            </div>
+          </div>
+
+          <div class="row">
+            <label class="checkbox-row">
+              <input type="checkbox" id="capfolder_recursive" />
+              Include subfolders
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="capfolder_overwrite" />
+              Overwrite existing .txt files
+            </label>
+          </div>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="trigger_enabled" />
+            Use a trigger word
+          </label>
+          <div id="trigger_block" class="llm-block">
+            <p class="card-note">A trigger word is a token every caption should consistently include — common for LoRA/Dreambooth training sets. What it stands for changes how it should read in a sentence, so tell us its role:</p>
+            <div class="row">
+              <div class="field">
+                <label>Trigger word</label>
+                <input type="text" id="trigger_word" placeholder="e.g. ohwx, mystyle42, jumpingpose" />
+              </div>
+              <div class="field">
+                <label>What does it represent?</label>
+                <select id="trigger_role">
+                  <option value="subject">A specific subject (person / character / object)</option>
+                  <option value="style">An art or visual style</option>
+                  <option value="action">An action or pose</option>
+                  <option value="custom">Something else&hellip;</option>
+                </select>
+              </div>
+            </div>
+            <div class="field" id="trigger_custom_field" hidden>
+              <label>How should the model use it? <span class="optional">(your own words; use <code>{word}</code> where the trigger word itself should be inserted)</span></label>
+              <textarea id="trigger_custom" rows="2" placeholder="e.g. {word} is a specific lighting setup -- mention the image uses {word} lighting."></textarea>
+            </div>
+          </div>
+
+          <div class="query-actions">
+            <button type="button" id="capfolder-btn">&#128221; Caption this folder</button>
+            <span class="hint" id="capfolder-hint"></span>
+          </div>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button type="submit" id="start-btn">Start download</button>
+        <button type="button" id="cancel-btn" disabled>Cancel</button>
+      </div>
+    </form>
+
+    <section class="card" id="expanded-card" hidden>
+      <h2>Generated queries</h2>
+      <div id="expanded-list"></div>
+    </section>
+
+    <section class="card" id="progress-card" hidden>
+      <h2>Progress</h2>
+      <div class="stats" id="stats">
+        <span><span id="stat-downloaded-label">Downloaded</span>: <b id="stat-downloaded">0</b></span>
+        <span>Errors: <b id="stat-errors">0</b></span>
+        <span id="stat-duplicates-row">Duplicates: <b id="stat-duplicates">0</b></span>
+        <span>Captions: <b id="stat-captioned">0</b></span>
+        <span id="job-status" class="status-badge">running</span>
+      </div>
+      <details class="settings-details">
+        <summary>Raw log</summary>
+        <div class="log" id="log"></div>
+      </details>
+    </section>
+
+    <section class="card" id="thumbs-card" hidden>
+      <h2 id="thumbs-title">Downloaded images</h2>
+      <div class="thumb-grid" id="thumb-grid"></div>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
