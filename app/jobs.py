@@ -9,8 +9,9 @@ from pathlib import Path
 
 import httpx
 
+from .captioning import build_captioner
 from .download import download_image, sanitize_folder_name
-from .llm_client import LLMClient, build_trigger_instruction
+from .llm_client import LLMClient
 from .models import CaptionFolderRequest, JobCreateRequest
 from .search import build_search_provider
 
@@ -83,7 +84,11 @@ class JobManager:
         await self.emit(state, "status", {"status": "running"})
 
         expander = LLMClient(req.llm_expansion.llm) if req.llm_expansion.enabled else None
-        captioner = LLMClient(req.captioning.llm) if req.captioning.enabled else None
+        captioner = (
+            build_captioner(req.captioning.method, req.captioning.llm, req.captioning.wd14)
+            if req.captioning.enabled
+            else None
+        )
         try:
             search_provider = build_search_provider(req.search)
             allowed_formats = {f.lower().lstrip(".") for f in req.filters.formats}
@@ -181,7 +186,7 @@ class JobManager:
                         )
                         if captioner:
                             try:
-                                caption = await captioner.caption_image(res.content, res.content_type or "image/jpeg")
+                                caption = await captioner.caption(res.content, res.content_type or "image/jpeg")
                                 txt_path = res.path.with_suffix(".txt")
                                 txt_path.write_text(caption, encoding="utf-8")
                                 state.stats["captioned"] += 1
@@ -223,7 +228,7 @@ class JobManager:
         state.status = "running"
         await self.emit(state, "status", {"status": "running"})
 
-        captioner = LLMClient(req.llm)
+        captioner = build_captioner(req.method, req.llm, req.wd14, trigger=req.trigger)
         try:
             root = Path(req.folder)
             if not root.is_dir():
@@ -235,8 +240,6 @@ class JobManager:
             )
             if not image_files:
                 await self.emit(state, "warning", {"message": "No images found in this folder."})
-
-            instruction = build_trigger_instruction(req.trigger)
 
             for path in image_files:
                 if state.cancel_requested:
@@ -254,7 +257,7 @@ class JobManager:
                 try:
                     content = path.read_bytes()
                     mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
-                    caption = await captioner.caption_image(content, mime, extra_instruction=instruction)
+                    caption = await captioner.caption(content, mime)
                 except Exception as e:
                     state.stats["errors"] += 1
                     await self.emit(state, "warning", {"message": f"Captioning failed for {path.name}: {e}"})

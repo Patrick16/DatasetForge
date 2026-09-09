@@ -54,32 +54,31 @@ The closer competition, especially for the trigger-word feature:
 
 ## Honest weak spots vs. the mature alternatives
 
-- **WD14 tagger** (taggui/kohya_ss) usually gives more consistent,
-  "trainable" tags for anime/booru-style work than a generic vision-LLM
-  caption. That's a specialized, widely-used, fine-tuned tool -- DatasetForge
-  doesn't try to compete with it head-on yet.
-- **gallery-dl** is far more robust and covers vastly more sites. DatasetForge
-  is pinned to one engine (DuckDuckGo via `ddgs`), not an affiliated API, and
-  can break if they change something on their end.
+- **gallery-dl** is far more robust and covers vastly more sites than our
+  four search providers combined, and doesn't rely on scraping search-engine
+  result pages the way DuckDuckGo/Yandex/Google here do.
 - No dataset-wide batch tag editing (find/replace across already-written
   `.txt` files).
 - No similarity-based de-dup, only exact content-hash de-dup.
 - No integration with the actual training step (kohya_ss trains; DatasetForge
   stops at "captioned folder ready for a trainer").
 
+## Shipped since these notes were written
+
+- ✅ **WD14/booru tagger mode** -- `app/wd14_tagger.py` + `app/captioning.py`.
+  Local ONNX inference, no server needed; trigger word prepended as the first
+  tag. Confirmed live against real images.
+- ✅ **A second (third, fourth...) search backend** -- Yandex, Google, and
+  booru boards (e621/gelbooru/rule34/danbooru) alongside DuckDuckGo, via
+  `build_search_provider()` in `app/search/__init__.py`.
+
 ## Candidate next steps (not decided -- discuss before building any of these)
 
 Roughly in the order the weak spots above suggest, not a priority order:
 
-- **WD14/booru tagger mode** as an alternative captioning backend alongside
-  the vision-LLM path, for anime/booru-style datasets where tag lists train
-  better than natural-language captions.
 - **Batch find/replace across existing captions** -- edit tags/captions for a
-  folder that's already been captioned, without re-running the vision model.
-- **A second search backend** (e.g. Google Custom Search API, Bing, or an
-  aggregator like SerpAPI) so the tool isn't a single point of failure tied
-  to one unofficial engine -- `ImageSearchProvider` in `app/search/` was
-  already designed to make this a drop-in addition.
+  folder that's already been captioned, without re-running the vision model
+  or tagger.
 - **Similarity-based de-dup** (perceptual hash) in addition to exact
   content-hash de-dup, to catch near-duplicate images from different sources.
 - **Dataset-level review UI** -- browse/filter/bulk-delete already-downloaded

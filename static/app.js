@@ -14,14 +14,32 @@ function wireProviderDefaults(providerSelect, baseUrlInput) {
 wireProviderDefaults($("llm_provider"), $("llm_base_url"));
 wireProviderDefaults($("cap_provider"), $("cap_base_url"));
 
-function wireToggle(checkbox, block) {
-  const sync = () => block.classList.toggle("disabled", !checkbox.checked);
+function wireToggle(checkbox, ...blocks) {
+  const sync = () => blocks.forEach((b) => b.classList.toggle("disabled", !checkbox.checked));
   checkbox.addEventListener("change", sync);
   sync();
 }
 wireToggle($("llm_enabled"), $("llm_block"));
-wireToggle($("cap_enabled"), $("cap_block"));
+wireToggle($("cap_enabled"), $("cap_vision_block"), $("cap_wd14_block"));
 wireToggle($("trigger_enabled"), $("trigger_block"));
+
+// ---- captioning method: vision LLM (a sentence) vs WD14 tagger (a booru-
+// style tag list, local ONNX, no server needed) -- only one settings block
+// is relevant at a time, and the trigger-word note below reads differently
+// depending on which one is active (role-aware prompt vs. flat prepend). ----
+const CAP_METHOD_NOTES = {
+  vision_llm: "Needs a vision-capable model reachable via Ollama/LM Studio/a cloud API -- configure it in Settings below.",
+  wd14: "Runs locally via ONNX -- no model server needed. Outputs a comma-separated tag list (e.g. \"solo, blue hair, outdoors\") instead of a sentence.",
+};
+
+function syncCapMethodUI() {
+  const method = $("cap_method").value;
+  $("cap_vision_block").hidden = method !== "vision_llm";
+  $("cap_wd14_block").hidden = method !== "wd14";
+  $("cap-method-note").textContent = CAP_METHOD_NOTES[method] || "";
+}
+$("cap_method").addEventListener("change", syncCapMethodUI);
+syncCapMethodUI();
 
 function syncGenerateBtn() {
   $("generate-btn").disabled = !$("llm_enabled").checked;
@@ -195,7 +213,8 @@ const FIELD_IDS = [
   "search_provider", "booru_site", "booru_api_key", "booru_user_id", "booru_login",
   "min_width", "min_height", "safesearch",
   "llm_enabled", "llm_provider", "llm_variations", "llm_base_url", "llm_model", "llm_api_key", "llm_timeout", "llm_models_folder", "llm_disable_reasoning",
-  "cap_enabled", "cap_provider", "cap_model", "cap_base_url", "cap_api_key", "cap_timeout", "cap_models_folder", "cap_disable_reasoning",
+  "cap_enabled", "cap_method", "cap_provider", "cap_model", "cap_base_url", "cap_api_key", "cap_timeout", "cap_models_folder", "cap_disable_reasoning",
+  "cap_wd14_model", "cap_wd14_general_threshold", "cap_wd14_character_threshold",
   "capfolder_path", "capfolder_recursive", "capfolder_overwrite",
   "trigger_enabled", "trigger_word", "trigger_role", "trigger_custom",
 ];
@@ -231,13 +250,15 @@ function loadForm() {
     });
   }
   $("llm_block").classList.toggle("disabled", !$("llm_enabled").checked);
-  $("cap_block").classList.toggle("disabled", !$("cap_enabled").checked);
+  $("cap_vision_block").classList.toggle("disabled", !$("cap_enabled").checked);
+  $("cap_wd14_block").classList.toggle("disabled", !$("cap_enabled").checked);
   $("trigger_block").classList.toggle("disabled", !$("trigger_enabled").checked);
 }
 loadForm();
 syncGenerateBtn();
 syncTriggerCustomField();
 syncSearchProviderUI();
+syncCapMethodUI();
 document.getElementById("job-form").addEventListener("change", saveForm);
 
 // ---- query generation: expand queries with the LLM and write the result back
@@ -353,6 +374,7 @@ function buildRequest() {
     },
     captioning: {
       enabled: $("cap_enabled").checked,
+      method: $("cap_method").value,
       llm: {
         provider: $("cap_provider").value,
         base_url: $("cap_base_url").value.trim(),
@@ -361,7 +383,18 @@ function buildRequest() {
         timeout_seconds: Number($("cap_timeout").value) || 180,
         disable_reasoning: $("cap_disable_reasoning").checked,
       },
+      wd14: buildWD14Config(),
     },
+  };
+}
+
+// Shared by the per-download captioning config and the standalone
+// caption-folder request -- both use the same WD14 fields.
+function buildWD14Config() {
+  return {
+    model: $("cap_wd14_model").value.trim() || "wd-vit-tagger-v3",
+    general_threshold: Number($("cap_wd14_general_threshold").value) || 0.35,
+    character_threshold: Number($("cap_wd14_character_threshold").value) || 0.85,
   };
 }
 
@@ -586,6 +619,7 @@ document.getElementById("job-form").addEventListener("submit", async (e) => {
 function buildCaptionFolderRequest() {
   return {
     folder: $("capfolder_path").value.trim(),
+    method: $("cap_method").value,
     recursive: $("capfolder_recursive").checked,
     overwrite: $("capfolder_overwrite").checked,
     llm: {
@@ -596,6 +630,7 @@ function buildCaptionFolderRequest() {
       timeout_seconds: Number($("cap_timeout").value) || 180,
       disable_reasoning: $("cap_disable_reasoning").checked,
     },
+    wd14: buildWD14Config(),
     trigger: {
       enabled: $("trigger_enabled").checked,
       word: $("trigger_word").value.trim(),

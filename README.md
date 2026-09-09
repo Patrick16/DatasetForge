@@ -9,8 +9,10 @@ you choose. Optionally:
 
 - **Query LLM** — generates N additional search-query variations for each input
   query (Ollama / LM Studio / any OpenAI-compatible cloud API).
-- **Vision LLM (captioning)** — for every downloaded image, saves a `<name>.txt`
-  file with a generated description (same provider choice).
+- **Captioning** — for every downloaded image, saves a `<name>.txt` file: either
+  a natural-language description from a vision LLM, or a booru-style tag list
+  from a local **WD14 tagger** (no server/API key needed), see **Captioning
+  methods** below.
 
 The whole thing runs as a single local FastAPI server; the web UI (no build step)
 talks to it over HTTP + WebSocket.
@@ -162,6 +164,40 @@ To add another search source, implement `ImageSearchProvider.search()` under
 `app/search/` and register it in `build_search_provider()` in
 `app/search/__init__.py`.
 
+## Captioning methods
+
+Chosen via the **Method** dropdown at the top of the captioning card, shared
+by both per-download captioning and the standalone "Caption an existing
+folder" action:
+
+| Method | What it produces | Requirements |
+|---|---|---|
+| **Vision LLM** (default) | A natural-language sentence, e.g. "A rugged, jagged mountain range stretches across a deep blue sky." | A vision-capable model via Ollama/LM Studio/a cloud API -- see **Optional LLM providers** below. |
+| **WD14 Tagger** | A comma-separated booru-style tag list, e.g. `solo, blue hair, outdoors, looking at viewer` -- confirmed live against real images during development. | Nothing external -- runs fully locally via ONNX Runtime (`app/wd14_tagger.py`). |
+
+WD14 is a local image-classification model (the same family used by
+kohya_ss/taggui), not a chat model -- it outputs hundreds of candidate tags
+with confidence scores, and only the ones above a threshold make it into the
+caption. Character tags (a specific named character) use a separate, higher
+threshold than general tags by default, since false positives there are more
+disruptive to a training set.
+
+- **Model presets**: `wd-vit-tagger-v3` (default -- smallest/fastest,
+  confirmed live: ~55MB download, ~0.2s CPU inference once loaded),
+  `wd-convnext-tagger-v3`, `wd-swinv2-tagger-v3` (a commonly recommended
+  balance), `wd-eva02-large-tagger-v3` (largest/most accurate). Any other
+  compatible Hugging Face repo id (one with a `model.onnx` +
+  `selected_tags.csv`) also works, typed in directly.
+- **First use downloads the model** from Hugging Face (cached afterwards by
+  `huggingface_hub` in its own cache dir) -- needs internet the first time for
+  a given model, nothing after that.
+- **Trigger word + WD14**: a flat tag list doesn't have sentence grammar for a
+  trigger word's "role" (subject/style/action) to fit into the way a Vision
+  LLM prompt does, so it's simply prepended as the first tag instead --
+  confirmed live: `{"enabled": true, "word": "sks_creature"}` produced
+  `sks_creature, animal ears, solo, ...` for every image, matching the common
+  LoRA/Dreambooth training convention.
+
 ## Optional LLM providers
 
 Both blocks (query expansion and captioning) are configured independently right
@@ -222,6 +258,8 @@ app/
                     # and standalone caption-folder job, sharing one JobState/WebSocket model
   download.py      # async download + validation + de-dup
   llm_client.py    # generic OpenAI-compatible API client + trigger-word prompt building
+  captioning.py    # Captioner interface: picks vision-LLM vs WD14, bakes in the trigger word
+  wd14_tagger.py   # local ONNX WD14-family tagger (preprocessing, inference, tag formatting)
   local_models.py  # native folder picker + model discovery (server /v1/models + folder scan)
   model_registry.py # tracks which (provider, base_url, model) this process has used
   model_control.py # unloads a model from Ollama (native API) or LM Studio (`lms` CLI)

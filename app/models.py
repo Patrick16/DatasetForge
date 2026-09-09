@@ -32,9 +32,28 @@ class LLMExpansionConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
 
+class WD14Config(BaseModel):
+    """Config for WD14-family tagger models (ONNX image classifiers that
+    output booru-style tags with confidence scores, as an alternative to a
+    vision LLM writing a natural-language caption).
+
+    `model` accepts either one of the built-in presets (see
+    app/wd14_tagger.py MODEL_PRESETS) or a raw Hugging Face repo id for any
+    compatible WD14-family tagger. The first use of a given model downloads
+    it (cached afterwards by huggingface_hub in its own cache dir) -- no
+    local server/API key needed, unlike the vision-LLM path.
+    """
+
+    model: str = "wd-vit-tagger-v3"
+    general_threshold: float = Field(default=0.35, ge=0, le=1)
+    character_threshold: float = Field(default=0.85, ge=0, le=1)
+
+
 class CaptioningConfig(BaseModel):
     enabled: bool = False
+    method: Literal["vision_llm", "wd14"] = "vision_llm"
     llm: LLMConfig = Field(default_factory=lambda: LLMConfig(model="moondream"))
+    wd14: WD14Config = Field(default_factory=WD14Config)
 
 
 class FilterConfig(BaseModel):
@@ -104,7 +123,9 @@ class CaptionFolderRequest(BaseModel):
     download job -- e.g. an existing dataset you want captions for."""
 
     folder: str
+    method: Literal["vision_llm", "wd14"] = "vision_llm"
     llm: LLMConfig = Field(default_factory=lambda: LLMConfig(model="moondream"))
+    wd14: WD14Config = Field(default_factory=WD14Config)
     recursive: bool = False
     overwrite: bool = False
     trigger: TriggerWordConfig = Field(default_factory=TriggerWordConfig)
