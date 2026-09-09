@@ -3,7 +3,9 @@
 [![Tests](https://github.com/Patrick16/DatasetForge/actions/workflows/tests.yml/badge.svg)](https://github.com/Patrick16/DatasetForge/actions/workflows/tests.yml)
 
 A local web tool: given a list of text queries, it downloads images from the web
-(search via DuckDuckGo, no API key needed) into a folder you choose. Optionally:
+(search via DuckDuckGo by default, no API key needed -- Yandex, Google, and
+booru boards are also available, see **Search providers** below) into a folder
+you choose. Optionally:
 
 - **Query LLM** — generates N additional search-query variations for each input
   query (Ollama / LM Studio / any OpenAI-compatible cloud API).
@@ -48,12 +50,14 @@ network calls or a live model server -- no external services required.
   default alongside jpg/png/webp (only `bmp` is off by default).
 - **SafeSearch control** — a dropdown (Off / Moderate / On) next to the format
   filters. This isn't a filter *we* apply -- it's passed straight through to
-  DuckDuckGo's own search, so results it excludes never reach this app at all.
-  Previously there was no way to change it and it was silently always on
-  (`ddgs`'s own default, "moderate"), which made the tool unable to fetch
+  the search source itself (DuckDuckGo/Yandex/Google) or turned into a
+  `rating:` tag (booru boards), so results it excludes never reach this app
+  at all. Previously there was no way to change it and it was silently always
+  on (`ddgs`'s own default, "moderate"), which made the tool unable to fetch
   results DuckDuckGo itself considers not-safe-for-work no matter what you
-  searched for or how your local filters were set. Confirmed live that "off"
-  vs "on" actually returns a different result set for a borderline query.
+  searched for or how your local filters were set. Confirmed live for both
+  DuckDuckGo and Yandex that "off" vs "on" actually returns a different
+  result set for a borderline query.
 - **"Filtered" vs "Errors" are counted separately.** Images your own
   format/min-size filters excluded show up under "Filtered" (expected,
   working as configured); network failures, bad data, etc. show up under
@@ -128,6 +132,36 @@ network calls or a live model server -- no external services required.
   unload` itself exits 0 with a "Model Not Found" message in that case, which
   used to be passed straight through and read exactly like a failure.
 
+## Search providers
+
+Chosen via the "Search source" card. All four confirmed working live during
+development (2026-09) except where noted:
+
+| Provider | What it is | SafeSearch mechanism | Notes |
+|---|---|---|---|
+| **DuckDuckGo** (default) | No API key. Under the hood this actually proxies **Bing's** image index (confirmed by inspecting the `ddgs` library's own provider tagging) -- there is no independent DuckDuckGo image index. | `p` query param | The more reliable of the two ways to reach that same Bing data -- Bing's own direct scraping route in `ddgs` ignores the safesearch argument entirely. |
+| **Yandex** | Unofficial scraping of `yandex.com/images`. Historically laxer filtering than Google/Bing. | `family` cookie (`0`=off, `2`=on, unset=default) | Confirmed live: toggling it changed 5/25 results on a borderline query. Width/height aren't extracted from the scrape -- harmless, since every file is re-measured with Pillow after downloading anyway. |
+| **Google** (experimental) | Unofficial scraping. | `safe` query param | ⚠️ Confirmed unreliable in testing: Google returned an HTTP 429 bot-check on the *first* request, with full browser-like headers and no prior history. Expect frequent zero results; a block degrades to "0 found" plus a log warning, not a crash. Try Yandex or DuckDuckGo instead if this keeps failing for you. |
+| **Booru board** | Danbooru-API-family boards, for tag-driven / anime-style datasets. | An explicit `rating:` tag, not a hidden toggle -- content is opt-in tagged (general/sensitive/questionable/explicit; naming varies by board) rather than filtered by a black-box heuristic. | See below -- access requirements vary a lot by board. |
+
+### Booru board access (confirmed live, 2026-09)
+
+- **e621** — works with zero configuration.
+- **Gelbooru** / **Rule34.xxx** — now require an `api_key` + `user_id` (free
+  account -> Account -> API Access Credentials); both returned HTTP
+  401/"Missing authentication" without one. This is a change from their
+  historical open access.
+- **Danbooru** — supports `login` + `api_key` (HTTP Basic Auth, the
+  documented method), but requests were blocked by a Cloudflare bot-check
+  ("Just a moment...") in testing regardless, from at least some networks.
+  Implemented, but best-effort -- it may just not work for you. Also:
+  anonymous Danbooru API access is limited to 2 combined tags, which a
+  multi-word query plus the rating tag can easily exceed.
+
+To add another search source, implement `ImageSearchProvider.search()` under
+`app/search/` and register it in `build_search_provider()` in
+`app/search/__init__.py`.
+
 ## Optional LLM providers
 
 Both blocks (query expansion and captioning) are configured independently right
@@ -192,15 +226,16 @@ app/
   model_registry.py # tracks which (provider, base_url, model) this process has used
   model_control.py # unloads a model from Ollama (native API) or LM Studio (`lms` CLI)
   search/
+    __init__.py     # build_search_provider() factory (picks provider by SearchConfig)
     base.py         # ImageSearchProvider interface
     duckduckgo.py    # DuckDuckGo search (no API key)
+    yandex.py        # Yandex Images scraping
+    google.py        # Google Images scraping (experimental, unreliable)
+    booru.py         # Danbooru/e621/Gelbooru/Rule34
 static/
   index.html, style.css, app.js   # web UI, no build step
 tests/                            # pytest suite for app/ (see "Tests" above)
 ```
-
-To add a new search source, implement `ImageSearchProvider.search()` under
-`app/search/` and wire it up in `app/jobs.py`.
 
 ## Known limitations (MVP)
 

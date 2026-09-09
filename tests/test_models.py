@@ -68,10 +68,12 @@ class TestFilterConfig:
         assert cfg.min_width == 0
         assert cfg.min_height == 0
 
-    def test_default_formats_include_gif(self):
-        # Regression: gif used to be excluded by default with no visible
-        # indication why matching results were being dropped.
-        assert FilterConfig().formats == ["jpg", "jpeg", "png", "webp", "gif"]
+    def test_default_formats(self):
+        # NOTE: gif was briefly included by default (fixing a report that gif
+        # never downloaded because the UI checkbox defaulted off with no
+        # visible reason why) but that default was reverted since; this just
+        # documents current behavior rather than re-asserting that fix.
+        assert FilterConfig().formats == ["jpg", "jpeg", "png", "webp"]
 
     def test_default_safesearch_matches_the_ddgs_library_default(self):
         assert FilterConfig().safesearch == "moderate"

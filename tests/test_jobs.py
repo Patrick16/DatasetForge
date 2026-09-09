@@ -301,7 +301,7 @@ class TestRunJob:
             return DownloadResult(ok=True, url=result.url, path=path, content=b"x", content_type="image/jpeg")
 
         monkeypatch.setattr(jobs_module, "download_image", fake_download_image)
-        monkeypatch.setattr(jobs_module, "DuckDuckGoProvider", lambda: FakeSearchProvider())
+        monkeypatch.setattr(jobs_module, "build_search_provider", lambda config: FakeSearchProvider())
         monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
 
         req = make_request(
@@ -331,7 +331,7 @@ class TestRunJob:
             return DownloadResult(ok=True, url=result.url, path=tmp_path / "x.jpg")
 
         monkeypatch.setattr(jobs_module, "download_image", fake_download_image)
-        monkeypatch.setattr(jobs_module, "DuckDuckGoProvider", lambda: provider)
+        monkeypatch.setattr(jobs_module, "build_search_provider", lambda config: provider)
 
         req = make_request(queries=["cats", "dogs"], n_per_query=1, output_folder=str(tmp_path))
         state = manager.create_job(req)
@@ -345,10 +345,10 @@ class TestRunJob:
     async def test_llm_clients_are_closed_even_when_the_job_errors(self, manager, monkeypatch, tmp_path):
         monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
 
-        def broken_provider():
+        def broken_provider(config):
             raise RuntimeError("provider init failed")
 
-        monkeypatch.setattr(jobs_module, "DuckDuckGoProvider", broken_provider)
+        monkeypatch.setattr(jobs_module, "build_search_provider", broken_provider)
 
         req = make_request(
             output_folder=str(tmp_path),

@@ -34,6 +34,24 @@ function syncTriggerCustomField() {
 $("trigger_role").addEventListener("change", syncTriggerCustomField);
 syncTriggerCustomField();
 
+// ---- search source: booru sub-fields only matter (and only show) when
+// "booru" is selected, and each provider gets a short note about what to
+// expect (reliability, what SafeSearch actually controls there). ----
+const SEARCH_PROVIDER_NOTES = {
+  duckduckgo: "No configuration needed. Effectively proxies Bing's image index.",
+  yandex: "Unofficial scraping (like DuckDuckGo) -- can break if Yandex changes their page markup. Historically laxer SafeSearch than Google/Bing.",
+  google: "⚠️ Unofficial scraping -- confirmed unreliable in testing (Google blocked requests almost immediately, even with full browser headers). Expect frequent zero results; try Yandex or DuckDuckGo instead if this keeps failing.",
+  booru: "Content is explicitly rating-tagged rather than hidden behind a SafeSearch toggle -- see board options below.",
+};
+
+function syncSearchProviderUI() {
+  const provider = $("search_provider").value;
+  $("booru_block").classList.toggle("disabled", provider !== "booru");
+  $("search-provider-note").textContent = SEARCH_PROVIDER_NOTES[provider] || "";
+}
+$("search_provider").addEventListener("change", syncSearchProviderUI);
+syncSearchProviderUI();
+
 // ---- native folder picker (server-side dialog; browser & server must be on the same machine) ----
 document.querySelectorAll(".browse-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
@@ -174,6 +192,7 @@ $("unload-models-btn").addEventListener("click", async () => {
 const STORAGE_KEY = "datasetforge:form";
 const FIELD_IDS = [
   "queries", "n_per_query", "concurrency", "output_folder", "query_subfolders",
+  "search_provider", "booru_site", "booru_api_key", "booru_user_id", "booru_login",
   "min_width", "min_height", "safesearch",
   "llm_enabled", "llm_provider", "llm_variations", "llm_base_url", "llm_model", "llm_api_key", "llm_timeout", "llm_models_folder", "llm_disable_reasoning",
   "cap_enabled", "cap_provider", "cap_model", "cap_base_url", "cap_api_key", "cap_timeout", "cap_models_folder", "cap_disable_reasoning",
@@ -218,6 +237,7 @@ function loadForm() {
 loadForm();
 syncGenerateBtn();
 syncTriggerCustomField();
+syncSearchProviderUI();
 document.getElementById("job-form").addEventListener("change", saveForm);
 
 // ---- query generation: expand queries with the LLM and write the result back
@@ -308,6 +328,13 @@ function buildRequest() {
       min_width: Number($("min_width").value),
       min_height: Number($("min_height").value),
       safesearch: $("safesearch").value,
+    },
+    search: {
+      provider: $("search_provider").value,
+      booru_site: $("booru_site").value,
+      booru_api_key: $("booru_api_key").value.trim() || null,
+      booru_user_id: $("booru_user_id").value.trim() || null,
+      booru_login: $("booru_login").value.trim() || null,
     },
     // Query expansion, if enabled, already ran client-side (generateQueries())
     // and its results are baked into `queries` above -- the backend must not
