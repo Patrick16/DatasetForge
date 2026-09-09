@@ -1,5 +1,7 @@
 # DatasetForge
 
+[![Tests](https://github.com/Patrick16/DatasetForge/actions/workflows/tests.yml/badge.svg)](https://github.com/Patrick16/DatasetForge/actions/workflows/tests.yml)
+
 A local web tool: given a list of text queries, it downloads images from the web
 (search via DuckDuckGo, no API key needed) into a folder you choose. Optionally:
 
@@ -190,6 +192,10 @@ To add a new search source, implement `ImageSearchProvider.search()` under
   progress of any job that hasn't finished.
 - DuckDuckGo search is unofficial: it can break if they change something on
   their end (update the `ddgs` package if that happens).
+
+## License
+
+[MIT](LICENSE)
 
 ## Where to next
 
