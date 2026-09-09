@@ -12,7 +12,7 @@ import httpx
 from .download import download_image, sanitize_folder_name
 from .llm_client import LLMClient, build_trigger_instruction
 from .models import CaptionFolderRequest, JobCreateRequest
-from .search.duckduckgo import DuckDuckGoProvider
+from .search import build_search_provider
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class JobManager:
         expander = LLMClient(req.llm_expansion.llm) if req.llm_expansion.enabled else None
         captioner = LLMClient(req.captioning.llm) if req.captioning.enabled else None
         try:
-            search_provider = DuckDuckGoProvider()
+            search_provider = build_search_provider(req.search)
             allowed_formats = {f.lower().lstrip(".") for f in req.filters.formats}
             out_root = Path(req.output_folder)
 

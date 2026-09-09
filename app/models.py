@@ -49,6 +49,28 @@ class FilterConfig(BaseModel):
     safesearch: Literal["on", "moderate", "off"] = "moderate"
 
 
+class SearchConfig(BaseModel):
+    """Which image search backend to use, and booru-specific extras.
+
+    - duckduckgo: default, no config needed (proxies Bing's image index).
+    - yandex: unofficial scraping, historically laxer filtering than DDG/Google.
+    - google: unofficial scraping -- confirmed unreliable in testing (Google
+      blocks plain HTTP scraping aggressively); expect frequent zero results.
+    - booru: Danbooru-API-family boards (e621/gelbooru/rule34/danbooru).
+      Content is explicitly rating-tagged rather than hidden behind a
+      SafeSearch toggle, so `filters.safesearch` maps onto a rating: tag
+      instead of a provider-side filter flag.
+    """
+
+    provider: Literal["duckduckgo", "yandex", "google", "booru"] = "duckduckgo"
+    booru_site: Literal["e621", "gelbooru", "rule34", "danbooru"] = "e621"
+    # gelbooru/rule34 use an api_key + user_id pair; danbooru uses login + api_key
+    # (as HTTP Basic Auth). e621 needs none of these.
+    booru_api_key: Optional[str] = None
+    booru_user_id: Optional[str] = None
+    booru_login: Optional[str] = None
+
+
 class JobCreateRequest(BaseModel):
     queries: list[str]
     n_per_query: int = Field(default=10, ge=1)
@@ -57,6 +79,7 @@ class JobCreateRequest(BaseModel):
     llm_expansion: LLMExpansionConfig = Field(default_factory=LLMExpansionConfig)
     captioning: CaptioningConfig = Field(default_factory=CaptioningConfig)
     filters: FilterConfig = Field(default_factory=FilterConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
     concurrency: int = Field(default=8, ge=1)
 
 

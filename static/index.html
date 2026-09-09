@@ -56,6 +56,45 @@
       </section>
 
       <section class="card">
+        <h2>Search source</h2>
+        <label>Provider</label>
+        <select id="search_provider">
+          <option value="duckduckgo">DuckDuckGo (default)</option>
+          <option value="yandex">Yandex Images</option>
+          <option value="google">Google Images (experimental)</option>
+          <option value="booru">Booru board</option>
+        </select>
+        <p class="card-note" id="search-provider-note"></p>
+
+        <div id="booru_block" class="llm-block">
+          <div class="field">
+            <label>Board</label>
+            <select id="booru_site">
+              <option value="e621">e621 (no account needed)</option>
+              <option value="gelbooru">Gelbooru (needs API key + user ID)</option>
+              <option value="rule34">Rule34.xxx (needs API key + user ID)</option>
+              <option value="danbooru">Danbooru (needs login + API key)</option>
+            </select>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>API key <span class="optional">(gelbooru/rule34/danbooru)</span></label>
+              <input type="password" id="booru_api_key" placeholder="..." />
+            </div>
+            <div class="field">
+              <label>User ID <span class="optional">(gelbooru/rule34)</span></label>
+              <input type="text" id="booru_user_id" placeholder="..." />
+            </div>
+          </div>
+          <div class="field">
+            <label>Login <span class="optional">(danbooru only)</span></label>
+            <input type="text" id="booru_login" placeholder="your danbooru username" />
+          </div>
+          <p class="card-note">e621 needs no setup. Gelbooru/Rule34: free account &rarr; Account &rarr; API Access Credentials for the key + user ID. Danbooru: same idea (login + API key) -- but even authenticated requests hit a Cloudflare bot-check in testing from some networks, so treat it as best-effort.</p>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Filters</h2>
         <div class="row">
           <div class="field">
@@ -76,10 +115,10 @@
           <label><input type="checkbox" value="bmp" /> bmp</label>
         </div>
 
-        <label>SafeSearch <span class="optional">(applies to the DuckDuckGo search itself, not a local filter — results excluded here never reach this app at all)</span></label>
+        <label>SafeSearch <span class="optional">(applies at the search source itself, not a local filter — excluded results never reach this app. For Booru this maps to a rating: tag instead of a hidden toggle.)</span></label>
         <select id="safesearch">
           <option value="off">Off</option>
-          <option value="moderate" selected>Moderate (DuckDuckGo default)</option>
+          <option value="moderate" selected>Moderate (search engine default)</option>
           <option value="on">On (strict)</option>
         </select>
       </section>
