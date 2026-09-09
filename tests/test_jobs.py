@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app import captioning as captioning_module
 from app import jobs as jobs_module
 from app.download import DownloadResult
 from app.jobs import JobManager
@@ -65,6 +66,26 @@ class FakeLLMClient:
 
     async def aclose(self):
         self.closed = True
+
+
+class FakeCaptioner:
+    """Stand-in for a Captioner (app/captioning.py) passed directly to
+    _process_query -- unlike FakeLLMClient, this matches the `.caption()`
+    protocol jobs.py actually calls, without going through build_captioner()."""
+
+    def __init__(self, caption_text: str = "a fake caption", raise_error: Exception | None = None):
+        self.caption_text = caption_text
+        self.raise_error = raise_error
+        self.calls: list[bytes] = []
+
+    async def caption(self, image_bytes, mime="image/jpeg"):
+        self.calls.append(image_bytes)
+        if self.raise_error:
+            raise self.raise_error
+        return self.caption_text
+
+    async def aclose(self):
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -246,7 +267,7 @@ class TestProcessQueryWithExpansionAndCaptioning:
         req = make_request(n_per_query=1, captioning=CaptioningConfig(enabled=True))
         state = manager.create_job(req)
         provider = FakeSearchProvider()
-        captioner = FakeLLMClient(req.captioning.llm)
+        captioner = FakeCaptioner()
 
         await manager._process_query(
             state, "cats", req, provider, None, captioner, {"jpg"}, tmp_path, None
@@ -272,14 +293,10 @@ class TestProcessQueryWithExpansionAndCaptioning:
 
         monkeypatch.setattr(jobs_module, "download_image", fake_download_image)
 
-        class BrokenCaptioner(FakeLLMClient):
-            async def caption_image(self, *a, **kw):
-                raise RuntimeError("vision model down")
-
         req = make_request(n_per_query=1, captioning=CaptioningConfig(enabled=True))
         state = manager.create_job(req)
         provider = FakeSearchProvider()
-        captioner = BrokenCaptioner(req.captioning.llm)
+        captioner = FakeCaptioner(raise_error=RuntimeError("vision model down"))
 
         await manager._process_query(
             state, "cats", req, provider, None, captioner, {"jpg"}, tmp_path, None
@@ -302,7 +319,8 @@ class TestRunJob:
 
         monkeypatch.setattr(jobs_module, "download_image", fake_download_image)
         monkeypatch.setattr(jobs_module, "build_search_provider", lambda config: FakeSearchProvider())
-        monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
+        monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)  # the query-expander
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)  # inside build_captioner()
 
         req = make_request(
             queries=["cats", "dogs"],
@@ -344,6 +362,7 @@ class TestRunJob:
 
     async def test_llm_clients_are_closed_even_when_the_job_errors(self, manager, monkeypatch, tmp_path):
         monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
 
         def broken_provider(config):
             raise RuntimeError("provider init failed")
@@ -371,7 +390,7 @@ class TestRunCaptionFolderJob:
     async def test_captions_every_image_in_a_flat_folder(self, manager, monkeypatch, tmp_path):
         self._make_image(tmp_path / "a.jpg")
         self._make_image(tmp_path / "b.png")
-        monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
 
         req = CaptionFolderRequest(folder=str(tmp_path), llm=LLMConfig())
         state = manager.create_caption_folder_job(req)
@@ -387,7 +406,7 @@ class TestRunCaptionFolderJob:
     async def test_skips_images_that_already_have_a_caption(self, manager, monkeypatch, tmp_path):
         self._make_image(tmp_path / "a.jpg")
         (tmp_path / "a.txt").write_text("existing caption", encoding="utf-8")
-        monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
 
         req = CaptionFolderRequest(folder=str(tmp_path), llm=LLMConfig(), overwrite=False)
         state = manager.create_caption_folder_job(req)
@@ -402,7 +421,7 @@ class TestRunCaptionFolderJob:
     async def test_overwrite_forces_recaptioning(self, manager, monkeypatch, tmp_path):
         self._make_image(tmp_path / "a.jpg")
         (tmp_path / "a.txt").write_text("stale caption", encoding="utf-8")
-        monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
 
         req = CaptionFolderRequest(folder=str(tmp_path), llm=LLMConfig(), overwrite=True)
         state = manager.create_caption_folder_job(req)
@@ -416,7 +435,7 @@ class TestRunCaptionFolderJob:
         nested = tmp_path / "sub"
         nested.mkdir()
         self._make_image(nested / "a.jpg")
-        monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
 
         non_recursive_req = CaptionFolderRequest(folder=str(tmp_path), llm=LLMConfig(), recursive=False)
         state = manager.create_caption_folder_job(non_recursive_req)
@@ -429,7 +448,7 @@ class TestRunCaptionFolderJob:
         assert state2.stats["captioned"] == 1
 
     async def test_missing_folder_reports_error_status(self, manager, monkeypatch, tmp_path):
-        monkeypatch.setattr(jobs_module, "LLMClient", FakeLLMClient)
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
         req = CaptionFolderRequest(folder=str(tmp_path / "nope"), llm=LLMConfig())
         state = manager.create_caption_folder_job(req)
 
@@ -448,7 +467,7 @@ class TestRunCaptionFolderJob:
                 received["instruction"] = extra_instruction
                 return await super().caption_image(image_bytes, mime, extra_instruction)
 
-        monkeypatch.setattr(jobs_module, "LLMClient", RecordingCaptioner)
+        monkeypatch.setattr(captioning_module, "LLMClient", RecordingCaptioner)
 
         from app.models import TriggerWordConfig
 

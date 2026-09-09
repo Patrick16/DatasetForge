@@ -190,12 +190,21 @@
         <div class="block-header">
           <label class="checkbox-row inline">
             <input type="checkbox" id="cap_enabled" />
-            Image captioning (vision LLM)
+            Image captioning
           </label>
         </div>
+        <div class="field">
+          <label>Method</label>
+          <select id="cap_method">
+            <option value="vision_llm">Vision LLM (natural-language caption)</option>
+            <option value="wd14">WD14 Tagger (booru-style tags, runs locally, no server needed)</option>
+          </select>
+        </div>
+        <p class="card-note" id="cap-method-note"></p>
+
         <details class="settings-details">
           <summary>Settings</summary>
-          <div id="cap_block" class="llm-block">
+          <div id="cap_vision_block" class="llm-block">
             <div class="field">
               <label>Provider</label>
               <select id="cap_provider">
@@ -240,11 +249,35 @@
             </label>
             <p class="card-note">Some local "thinking" vision models spend their whole reply budget on hidden reasoning instead of a caption. This tricks llama.cpp-based servers (LM Studio, text-generation-webui, koboldcpp) into skipping it — not guaranteed to work on Ollama or cloud APIs.</p>
           </div>
+
+          <div id="cap_wd14_block" class="llm-block">
+            <div class="field">
+              <label>Model <span class="optional">(preset, or any compatible Hugging Face repo id)</span></label>
+              <input type="text" id="cap_wd14_model" value="wd-vit-tagger-v3" list="wd14_model_list" />
+              <datalist id="wd14_model_list">
+                <option value="wd-vit-tagger-v3">Vit (smallest, fastest, default)</option>
+                <option value="wd-convnext-tagger-v3">ConvNeXt</option>
+                <option value="wd-swinv2-tagger-v3">SwinV2 (commonly recommended balance)</option>
+                <option value="wd-eva02-large-tagger-v3">Eva02 Large (largest, most accurate)</option>
+              </datalist>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>General tag threshold</label>
+                <input type="number" id="cap_wd14_general_threshold" value="0.35" min="0" max="1" step="0.05" />
+              </div>
+              <div class="field">
+                <label>Character tag threshold</label>
+                <input type="number" id="cap_wd14_character_threshold" value="0.85" min="0" max="1" step="0.05" />
+              </div>
+            </div>
+            <p class="card-note">Runs fully locally via ONNX Runtime -- no Ollama/LM Studio/cloud API needed. First use downloads the model from Hugging Face (roughly 50&ndash;800MB depending on the preset) and caches it; every run after that is fast (confirmed live: ~0.2s per image on CPU for the default preset once loaded).</p>
+          </div>
         </details>
 
         <div class="folder-caption-block">
           <h3>Caption an existing folder</h3>
-          <p class="card-note">Captions every image already in a folder, independent of any download above — uses the vision LLM settings from "Settings" above.</p>
+          <p class="card-note">Captions every image already in a folder, independent of any download above — uses the Method and Settings configured above (Vision LLM or WD14 Tagger).</p>
 
           <div class="field">
             <label>Folder to caption</label>
@@ -270,7 +303,7 @@
             Use a trigger word
           </label>
           <div id="trigger_block" class="llm-block">
-            <p class="card-note">A trigger word is a token every caption should consistently include — common for LoRA/Dreambooth training sets. What it stands for changes how it should read in a sentence, so tell us its role:</p>
+            <p class="card-note">A trigger word is a token every caption should consistently include — common for LoRA/Dreambooth training sets. With the Vision LLM method, what it stands for changes how it should read in a sentence, so tell us its role below. With WD14 Tagger, it's simply prepended as the first tag regardless of role (a flat tag list doesn't have sentence grammar to fit a role into).</p>
             <div class="row">
               <div class="field">
                 <label>Trigger word</label>
