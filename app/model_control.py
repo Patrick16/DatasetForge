@@ -49,6 +49,15 @@ async def unload_lmstudio_model(model: str) -> str:
     text = out.decode(errors="replace").strip()
     if proc.returncode != 0:
         raise RuntimeError(text or f"'lms unload {model}' exited with code {proc.returncode}")
+
+    # `lms unload` exits 0 even when the model wasn't loaded in the first
+    # place (e.g. it already dropped out via LM Studio's own idle TTL before
+    # this ran) -- it just prints "Model Not Found" as plain output. Treat
+    # that the same as Ollama's idempotent keep_alive=0 behavior: the model
+    # ends up not loaded either way, which is what the caller wanted, so this
+    # is a success, not the error it reads like at a glance.
+    if "model not found" in text.lower() or "cannot find a model" in text.lower():
+        return f'"{model}" was already not loaded.'
     return text or f'Unloaded "{model}" via LM Studio.'
 
 

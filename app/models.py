@@ -41,6 +41,12 @@ class FilterConfig(BaseModel):
     formats: list[str] = Field(default_factory=lambda: ["jpg", "jpeg", "png", "webp"])
     min_width: int = Field(default=200, ge=0)
     min_height: int = Field(default=200, ge=0)
+    # Matches the underlying `ddgs` library's own default ("moderate") -- the
+    # search engine's SafeSearch filtering was previously always on with no
+    # way to change it, which silently drops results for anyone building a
+    # dataset that isn't strictly SFW. "on" is stricter filtering, "moderate"
+    # is the DuckDuckGo default, "off" disables it.
+    safesearch: Literal["on", "moderate", "off"] = "moderate"
 
 
 class JobCreateRequest(BaseModel):

@@ -35,10 +35,10 @@ class FakeSearchProvider:
     """Returns `n` distinct fake ImageResults per call and records every call."""
 
     def __init__(self):
-        self.calls: list[tuple[str, int]] = []
+        self.calls: list[tuple[str, int, str]] = []
 
-    async def search(self, query: str, n: int) -> list[ImageResult]:
-        self.calls.append((query, n))
+    async def search(self, query: str, n: int, safesearch: str = "moderate") -> list[ImageResult]:
+        self.calls.append((query, n, safesearch))
         return [ImageResult(url=f"http://example.com/{query}/{i}.jpg") for i in range(n)]
 
 
@@ -126,11 +126,12 @@ class TestProcessQueryDownloadOnly:
         warnings = [e for e in state.events if e.type == "warning"]
         assert any("Only found 0/3" in e.data["message"] for e in warnings)
 
-    async def test_duplicates_and_errors_are_tallied_separately(self, manager, monkeypatch, tmp_path):
+    async def test_duplicates_errors_and_filtered_are_tallied_separately(self, manager, monkeypatch, tmp_path):
         responses = [
             DownloadResult(ok=True, url="a", path=tmp_path / "a.jpg"),
             DownloadResult(ok=False, url="b", duplicate=True, error="dup"),
-            DownloadResult(ok=False, url="c", duplicate=False, error="bad format"),
+            DownloadResult(ok=False, url="c", duplicate=False, error="network timeout"),
+            DownloadResult(ok=False, url="d", filtered=True, error="format 'gif' not allowed"),
         ]
 
         async def fake_download_image(client, result, dest_dir, index, name_prefix,
@@ -143,10 +144,10 @@ class TestProcessQueryDownloadOnly:
         state = manager.create_job(req)
         provider = FakeSearchProvider()
 
-        # Only feed exactly 3 candidates so the worker stops after them
+        # Only feed exactly 4 candidates so the worker stops after them
         # instead of running out and emitting an extra "ran out" warning.
-        async def limited_search(query, n):
-            return [ImageResult(url=f"http://example.com/{i}.jpg") for i in range(3)]
+        async def limited_search(query, n, safesearch="moderate"):
+            return [ImageResult(url=f"http://example.com/{i}.jpg") for i in range(4)]
 
         provider.search = limited_search
 
@@ -157,6 +158,7 @@ class TestProcessQueryDownloadOnly:
         assert state.stats["downloaded"] == 1
         assert state.stats["duplicates"] == 1
         assert state.stats["errors"] == 1
+        assert state.stats["filtered"] == 1
 
     async def test_query_subfolders_toggle_controls_output_layout(self, manager, monkeypatch, tmp_path):
         seen_dirs = []

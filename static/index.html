@@ -72,9 +72,16 @@
           <label><input type="checkbox" value="jpg" checked /> jpg</label>
           <label><input type="checkbox" value="png" checked /> png</label>
           <label><input type="checkbox" value="webp" checked /> webp</label>
-          <label><input type="checkbox" value="gif" /> gif</label>
+          <label><input type="checkbox" value="gif" checked /> gif</label>
           <label><input type="checkbox" value="bmp" /> bmp</label>
         </div>
+
+        <label>SafeSearch <span class="optional">(applies to the DuckDuckGo search itself, not a local filter — results excluded here never reach this app at all)</span></label>
+        <select id="safesearch">
+          <option value="off">Off</option>
+          <option value="moderate" selected>Moderate (DuckDuckGo default)</option>
+          <option value="on">On (strict)</option>
+        </select>
       </section>
 
       <section class="card">
@@ -268,6 +275,7 @@
       <h2>Progress</h2>
       <div class="stats" id="stats">
         <span><span id="stat-downloaded-label">Downloaded</span>: <b id="stat-downloaded">0</b></span>
+        <span id="stat-filtered-row" title="Excluded by your format/size filters -- not an error, working as configured">Filtered: <b id="stat-filtered">0</b></span>
         <span>Errors: <b id="stat-errors">0</b></span>
         <span id="stat-duplicates-row">Duplicates: <b id="stat-duplicates">0</b></span>
         <span>Captions: <b id="stat-captioned">0</b></span>

@@ -174,7 +174,7 @@ $("unload-models-btn").addEventListener("click", async () => {
 const STORAGE_KEY = "datasetforge:form";
 const FIELD_IDS = [
   "queries", "n_per_query", "concurrency", "output_folder", "query_subfolders",
-  "min_width", "min_height",
+  "min_width", "min_height", "safesearch",
   "llm_enabled", "llm_provider", "llm_variations", "llm_base_url", "llm_model", "llm_api_key", "llm_timeout", "llm_models_folder", "llm_disable_reasoning",
   "cap_enabled", "cap_provider", "cap_model", "cap_base_url", "cap_api_key", "cap_timeout", "cap_models_folder", "cap_disable_reasoning",
   "capfolder_path", "capfolder_recursive", "capfolder_overwrite",
@@ -307,6 +307,7 @@ function buildRequest() {
       formats,
       min_width: Number($("min_width").value),
       min_height: Number($("min_height").value),
+      safesearch: $("safesearch").value,
     },
     // Query expansion, if enabled, already ran client-side (generateQueries())
     // and its results are baked into `queries` above -- the backend must not
@@ -353,10 +354,12 @@ function applyJobKindLabels(kind) {
   if (kind === "caption") {
     $("stat-downloaded-label").textContent = "Processed";
     $("stat-duplicates-row").hidden = true;
+    $("stat-filtered-row").hidden = true;
     $("thumbs-title").textContent = "Captioned images";
   } else {
     $("stat-downloaded-label").textContent = "Downloaded";
     $("stat-duplicates-row").hidden = false;
+    $("stat-filtered-row").hidden = false;
     $("thumbs-title").textContent = "Downloaded images";
   }
 }
@@ -378,6 +381,7 @@ function setStatusBadge(status) {
 
 function updateStats(stats) {
   $("stat-downloaded").textContent = stats.downloaded ?? 0;
+  $("stat-filtered").textContent = stats.filtered ?? 0;
   $("stat-errors").textContent = stats.errors ?? 0;
   $("stat-duplicates").textContent = stats.duplicates ?? 0;
   $("stat-captioned").textContent = stats.captioned ?? 0;
@@ -443,23 +447,26 @@ function handleEvent(ev) {
       break;
     case "downloaded":
       logLine(`OK  [${ev.data.query}] ${ev.data.path}`, "ok");
-      updateStats(bumpStats(1, 0, 0, 0));
+      updateStats(bumpStats({ downloaded: 1 }));
       if (ev.data.index !== undefined) addThumbnail(ev.data.index, ev.data.query);
       break;
     case "captioned":
       logLine(`CAP ${ev.data.path}: ${ev.data.caption}`, "info");
-      updateStats(bumpStats(0, 0, 0, 1));
+      updateStats(bumpStats({ captioned: 1 }));
       if (ev.data.index !== undefined && thumbCaptionEls[ev.data.index]) {
         thumbCaptionEls[ev.data.index].textContent = ev.data.caption;
       }
       break;
-    case "skip":
-      logLine(
-        `${ev.data.duplicate ? "DUP" : "ERR"} [${ev.data.query}] ${ev.data.url} - ${ev.data.error}`,
-        "err"
-      );
-      updateStats(bumpStats(0, ev.data.duplicate ? 0 : 1, ev.data.duplicate ? 1 : 0, 0));
+    case "skip": {
+      // "filtered" = deliberately excluded by our own format/size filters
+      // (working as configured); "duplicate" = same content seen before;
+      // anything else is a genuine error (network failure, bad data, ...).
+      const tag = ev.data.duplicate ? "DUP" : ev.data.filtered ? "FLT" : "ERR";
+      const key = ev.data.duplicate ? "duplicates" : ev.data.filtered ? "filtered" : "errors";
+      logLine(`${tag} [${ev.data.query}] ${ev.data.url} - ${ev.data.error}`, ev.data.filtered ? "info" : "err");
+      updateStats(bumpStats({ [key]: 1 }));
       break;
+    }
     case "warning":
       logLine(`WARN ${ev.data.message}`, "err");
       break;
@@ -467,12 +474,9 @@ function handleEvent(ev) {
 }
 
 // running counters, since backend "status" events only carry a snapshot at completion
-const stats = { downloaded: 0, errors: 0, duplicates: 0, captioned: 0 };
-function bumpStats(d, e, dup, c) {
-  stats.downloaded += d;
-  stats.errors += e;
-  stats.duplicates += dup;
-  stats.captioned += c;
+const stats = { downloaded: 0, errors: 0, duplicates: 0, captioned: 0, filtered: 0 };
+function bumpStats(delta) {
+  for (const key of Object.keys(delta)) stats[key] += delta[key];
   return stats;
 }
 
@@ -484,7 +488,7 @@ async function startJob(apiPath, body, kind) {
   applyJobKindLabels(kind);
   setActionButtonsDisabled(true);
 
-  stats.downloaded = stats.errors = stats.duplicates = stats.captioned = 0;
+  stats.downloaded = stats.errors = stats.duplicates = stats.captioned = stats.filtered = 0;
   updateStats(stats);
   $("log").innerHTML = "";
   $("thumb-grid").innerHTML = "";

@@ -36,6 +36,12 @@ class DownloadResult:
     path: Path | None = None
     error: str | None = None
     duplicate: bool = False
+    # True when this was rejected by our own format/min-size filters (i.e.
+    # working as configured) rather than failing outright (network error, bad
+    # data, ...) -- callers use this to report "filtered" separately from
+    # "errors" so it's clear results were deliberately excluded, not that
+    # something broke or that content is silently being blocked.
+    filtered: bool = False
     content: bytes | None = None
     content_type: str | None = None
 
@@ -65,11 +71,13 @@ async def download_image(
         fmt = (img.format or "").lower()
         ext = EXT_MAP.get(fmt)
         if ext is None or ext not in allowed_formats:
-            return DownloadResult(ok=False, url=result.url, error=f"format '{fmt}' not allowed")
+            return DownloadResult(ok=False, url=result.url, filtered=True, error=f"format '{fmt}' not allowed")
 
         width, height = img.size
         if width < min_width or height < min_height:
-            return DownloadResult(ok=False, url=result.url, error=f"too small ({width}x{height})")
+            return DownloadResult(
+                ok=False, url=result.url, filtered=True, error=f"too small ({width}x{height})"
+            )
 
         digest = hashlib.sha256(content).hexdigest()
         if digest in seen_hashes:

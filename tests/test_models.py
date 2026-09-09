@@ -67,3 +67,19 @@ class TestFilterConfig:
         cfg = FilterConfig(min_width=0, min_height=0)
         assert cfg.min_width == 0
         assert cfg.min_height == 0
+
+    def test_default_formats_include_gif(self):
+        # Regression: gif used to be excluded by default with no visible
+        # indication why matching results were being dropped.
+        assert FilterConfig().formats == ["jpg", "jpeg", "png", "webp", "gif"]
+
+    def test_default_safesearch_matches_the_ddgs_library_default(self):
+        assert FilterConfig().safesearch == "moderate"
+
+    def test_safesearch_accepts_all_three_values(self):
+        for value in ("on", "moderate", "off"):
+            assert FilterConfig(safesearch=value).safesearch == value
+
+    def test_invalid_safesearch_value_is_rejected(self):
+        with pytest.raises(ValidationError):
+            FilterConfig(safesearch="banana")

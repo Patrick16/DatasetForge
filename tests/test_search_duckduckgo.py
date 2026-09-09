@@ -19,9 +19,10 @@ class FakeDDGS:
     def __exit__(self, *exc_info):
         return False
 
-    def images(self, query, max_results):
+    def images(self, query, max_results, safesearch="moderate"):
         if self._raise:
             raise self._raise
+        self.last_safesearch = safesearch
         return self._results
 
 
@@ -66,3 +67,15 @@ class TestDuckDuckGoProvider:
         )
         results = await DuckDuckGoProvider().search("cats", 5)
         assert results == []
+
+    async def test_defaults_to_moderate_safesearch(self, monkeypatch):
+        fake = FakeDDGS([])
+        monkeypatch.setattr(duckduckgo, "DDGS", lambda: fake)
+        await DuckDuckGoProvider().search("cats", 5)
+        assert fake.last_safesearch == "moderate"
+
+    async def test_passes_through_an_explicit_safesearch_value(self, monkeypatch):
+        fake = FakeDDGS([])
+        monkeypatch.setattr(duckduckgo, "DDGS", lambda: fake)
+        await DuckDuckGoProvider().search("cats", 5, safesearch="off")
+        assert fake.last_safesearch == "off"

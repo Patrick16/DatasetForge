@@ -88,6 +88,26 @@ class TestUnloadLmstudioModel:
         with pytest.raises(RuntimeError, match="model not found"):
             await model_control.unload_lmstudio_model("nope")
 
+    async def test_already_unloaded_model_is_treated_as_success_not_error(self, monkeypatch):
+        """Regression test: `lms unload <model>` exits 0 even when the model
+        wasn't loaded (e.g. it already dropped out via LM Studio's own idle
+        TTL before this ran) -- it just prints "Model Not Found" as plain
+        output. That used to be passed straight through as the "success"
+        message, which reads exactly like an error to a user."""
+
+        async def fake_exec(*args, **kwargs):
+            return FakeProcess(
+                b'Model Not Found\n\nCannot find a model with the identifier "gemma".\n\n'
+                b"To see a list of loaded models, run:\n\n    lms ps",
+                0,
+            )
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        message = await model_control.unload_lmstudio_model("gemma")
+
+        assert "already not loaded" in message
+        assert "Model Not Found" not in message
+
     async def test_missing_lms_cli_raises_helpful_error(self, monkeypatch):
         async def fake_exec(*args, **kwargs):
             raise FileNotFoundError()

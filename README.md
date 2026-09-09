@@ -44,7 +44,22 @@ network calls or a live model server -- no external services required.
 - Multiple queries at once, N images per query, configurable concurrency.
 - `query_subfolders` toggle: one subfolder per query, or a flat folder with
   query-prefixed filenames.
-- Format/min-size filters, content-hash de-duplication.
+- Format/min-size filters, content-hash de-duplication. `gif` is included by
+  default alongside jpg/png/webp (only `bmp` is off by default).
+- **SafeSearch control** — a dropdown (Off / Moderate / On) next to the format
+  filters. This isn't a filter *we* apply -- it's passed straight through to
+  DuckDuckGo's own search, so results it excludes never reach this app at all.
+  Previously there was no way to change it and it was silently always on
+  (`ddgs`'s own default, "moderate"), which made the tool unable to fetch
+  results DuckDuckGo itself considers not-safe-for-work no matter what you
+  searched for or how your local filters were set. Confirmed live that "off"
+  vs "on" actually returns a different result set for a borderline query.
+- **"Filtered" vs "Errors" are counted separately.** Images your own
+  format/min-size filters excluded show up under "Filtered" (expected,
+  working as configured); network failures, bad data, etc. show up under
+  "Errors". They used to be lumped into one generic "Errors" counter, which
+  made it hard to tell whether something was actually broken or the filters
+  were just doing their job.
 - **Folder picker** — the "Browse…" buttons open a native OS folder dialog *on
   the machine running the server* (works because the server and browser are on
   the same machine for this local tool; it will not work if you access the UI
@@ -107,7 +122,11 @@ network calls or a live model server -- no external services required.
   same cleanup also runs automatically on a graceful shutdown (Ctrl+C in the
   terminal running `uvicorn`) -- but not on a force-kill (Task Manager "End
   task", `taskkill /F`, `kill -9`), since the OS never gives the process a
-  chance to run cleanup code at all in that case.
+  chance to run cleanup code at all in that case. If LM Studio already
+  auto-unloaded a model on its own (its own idle TTL) before you click the
+  button, that's reported as "already not loaded", not an error -- `lms
+  unload` itself exits 0 with a "Model Not Found" message in that case, which
+  used to be passed straight through and read exactly like a failure.
 
 ## Optional LLM providers
 

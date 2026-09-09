@@ -68,6 +68,7 @@ class TestDownloadImage:
 
         assert res.ok is False
         assert res.duplicate is False
+        assert res.filtered is True
         assert "not allowed" in res.error
         assert list(tmp_path.iterdir()) == []
 
@@ -82,6 +83,7 @@ class TestDownloadImage:
             )
 
         assert res.ok is False
+        assert res.filtered is True
         assert "too small" in res.error
 
     async def test_duplicate_content_is_rejected(self, tmp_path, jpeg_bytes):
@@ -102,6 +104,7 @@ class TestDownloadImage:
         assert first.ok is True
         assert second.ok is False
         assert second.duplicate is True
+        assert second.filtered is False  # a duplicate isn't a filter rejection
 
     async def test_http_error_status_is_reported(self, tmp_path):
         async def handler(request):
@@ -115,6 +118,7 @@ class TestDownloadImage:
 
         assert res.ok is False
         assert res.duplicate is False
+        assert res.filtered is False  # a network/HTTP failure isn't a filter rejection
         assert res.error
 
     async def test_non_image_content_is_reported(self, tmp_path):
@@ -128,4 +132,5 @@ class TestDownloadImage:
             )
 
         assert res.ok is False
+        assert res.filtered is False
         assert list(tmp_path.iterdir()) == []

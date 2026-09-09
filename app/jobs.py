@@ -41,7 +41,9 @@ class JobState:
     events: list[JobEvent] = field(default_factory=list)
     subscribers: list[asyncio.Queue] = field(default_factory=list)
     stats: dict = field(
-        default_factory=lambda: {"downloaded": 0, "errors": 0, "duplicates": 0, "captioned": 0}
+        default_factory=lambda: {
+            "downloaded": 0, "errors": 0, "duplicates": 0, "captioned": 0, "filtered": 0,
+        }
     )
     cancel_requested: bool = False
     # Files this job has successfully downloaded, in order -- served back to the
@@ -132,7 +134,7 @@ class JobManager:
             wanted = req.n_per_query
             fetch_n = min(max(wanted * OVERFETCH_MULTIPLIER, wanted + OVERFETCH_MIN_EXTRA), MAX_SEARCH_FETCH)
             try:
-                results = await search_provider.search(term, fetch_n)
+                results = await search_provider.search(term, fetch_n, safesearch=req.filters.safesearch)
             except Exception as e:
                 await self.emit(state, "warning", {"message": f"Search failed for '{term}': {e}"})
                 continue
@@ -192,11 +194,16 @@ class JobManager:
                     else:
                         if res.duplicate:
                             state.stats["duplicates"] += 1
+                        elif res.filtered:
+                            state.stats["filtered"] += 1
                         else:
                             state.stats["errors"] += 1
                         await self.emit(
                             state, "skip",
-                            {"query": term, "url": res.url, "error": res.error, "duplicate": res.duplicate},
+                            {
+                                "query": term, "url": res.url, "error": res.error,
+                                "duplicate": res.duplicate, "filtered": res.filtered,
+                            },
                         )
 
             worker_count = max(1, min(req.concurrency, wanted, len(results)))

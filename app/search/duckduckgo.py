@@ -17,10 +17,10 @@ except ImportError:  # pragma: no cover - fallback for older installs
 class DuckDuckGoProvider:
     """Image search backed by DuckDuckGo's (unofficial) image search. No API key required."""
 
-    async def search(self, query: str, n: int) -> list[ImageResult]:
+    async def search(self, query: str, n: int, safesearch: str = "moderate") -> list[ImageResult]:
         def _search() -> list[dict]:
             with DDGS() as ddgs:
-                return list(ddgs.images(query, max_results=n))
+                return list(ddgs.images(query, max_results=n, safesearch=safesearch))
 
         try:
             raw = await asyncio.to_thread(_search)
