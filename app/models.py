@@ -129,3 +129,14 @@ class CaptionFolderRequest(BaseModel):
     recursive: bool = False
     overwrite: bool = False
     trigger: TriggerWordConfig = Field(default_factory=TriggerWordConfig)
+
+
+class DedupFolderRequest(BaseModel):
+    """Find images in a folder with byte-identical content (exact sha256
+    match) and remove every copy but one -- e.g. after downloading the same
+    query from multiple search providers. Removed files go to the OS Recycle
+    Bin (via send2trash), not a permanent delete -- this is a bulk action on
+    a user's dataset, so it stays recoverable."""
+
+    folder: str
+    recursive: bool = False

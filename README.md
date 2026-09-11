@@ -198,6 +198,29 @@ disruptive to a training set.
   `sks_creature, animal ears, solo, ...` for every image, matching the common
   LoRA/Dreambooth training convention.
 
+## Remove duplicate images
+
+A standalone "Remove duplicate images" card (below captioning) scans a folder
+for images with **byte-identical content** (exact SHA256 match -- the same
+rule already used to skip an already-downloaded duplicate during a search)
+and removes every copy but one, keeping the alphabetically-first filename in
+each group.
+
+- **Recoverable, not a permanent delete**: removed files go to the OS Recycle
+  Bin via [`send2trash`](https://pypi.org/project/Send2Trash/), confirmed live
+  by checking `Shell.Application`'s Recycle Bin namespace after a run -- so a
+  bad run can still be undone from there.
+- Any orphaned `.txt` caption for a removed duplicate is removed alongside it
+  (same basename convention as captioning); the keeper's own caption is left
+  untouched.
+- **Include subfolders** toggles a recursive scan; off by default (folder-only).
+- The UI shows a confirmation dialog before running, since this is a bulk
+  action across a whole folder.
+
+This is exact-content dedup only -- it won't catch near-duplicates (resizes,
+re-encodes, crops). See **Where to next** below for perceptual-hash dedup as a
+possible future addition.
+
 ## Optional LLM providers
 
 Both blocks (query expansion and captioning) are configured independently right

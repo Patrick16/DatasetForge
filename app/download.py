@@ -21,6 +21,11 @@ EXT_MAP = {
     "bmp": "bmp",
 }
 
+# File suffixes treated as images elsewhere (caption-folder scanning, dedup
+# scanning) -- kept alongside EXT_MAP since both describe "what counts as an
+# image this app handles", just for different directions (write vs. scan).
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+
 _INVALID_CHARS = re.compile(r'[<>:"/\\|?*\n\r\t]')
 
 

@@ -332,6 +332,29 @@
         </div>
       </section>
 
+      <section class="card">
+        <h2>Remove duplicate images</h2>
+        <p class="card-note">Scans a folder for images with byte-identical content (exact hash match, same rule used to skip duplicates during a download) and removes every copy but one. Removed files go to the Recycle Bin, not a permanent delete -- and any orphaned <code>.txt</code> caption for a removed duplicate goes with it.</p>
+
+        <div class="field">
+          <label>Folder to deduplicate</label>
+          <div class="input-with-button">
+            <input type="text" id="dedup_path" placeholder="C:\path\to\images" />
+            <button type="button" class="browse-btn" data-target="dedup_path" data-title="Select folder to deduplicate">Browse&hellip;</button>
+          </div>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="dedup_recursive" />
+          Include subfolders
+        </label>
+
+        <div class="query-actions">
+          <button type="button" id="dedup-btn">&#128465; Remove duplicates</button>
+          <span class="hint" id="dedup-hint"></span>
+        </div>
+      </section>
+
       <div class="actions">
         <button type="submit" id="start-btn">Start download</button>
         <button type="button" id="cancel-btn" disabled>Cancel</button>
@@ -349,7 +372,7 @@
         <span><span id="stat-downloaded-label">Downloaded</span>: <b id="stat-downloaded">0</b></span>
         <span id="stat-filtered-row" title="Excluded by your format/size filters -- not an error, working as configured">Filtered: <b id="stat-filtered">0</b></span>
         <span>Errors: <b id="stat-errors">0</b></span>
-        <span id="stat-duplicates-row">Duplicates: <b id="stat-duplicates">0</b></span>
+        <span id="stat-duplicates-row"><span id="stat-duplicates-label">Duplicates</span>: <b id="stat-duplicates">0</b></span>
         <span>Captions: <b id="stat-captioned">0</b></span>
         <span id="job-status" class="status-badge">running</span>
       </div>

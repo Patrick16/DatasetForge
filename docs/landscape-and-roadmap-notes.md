@@ -71,6 +71,12 @@ The closer competition, especially for the trigger-word feature:
 - ✅ **A second (third, fourth...) search backend** -- Yandex, Google, and
   booru boards (e621/gelbooru/rule34/danbooru) alongside DuckDuckGo, via
   `build_search_provider()` in `app/search/__init__.py`.
+- ✅ **Standalone "Remove duplicates" button** -- `app/dedup.py`, scans an
+  existing folder for exact content-hash matches and removes every copy but
+  one (to the Recycle Bin via `send2trash`, not a permanent delete). This is
+  the same exact-hash rule the "no similarity-based de-dup" weak spot below
+  already referred to, just exposed as its own on-demand action instead of
+  only running implicitly during a download.
 
 ## Candidate next steps (not decided -- discuss before building any of these)
 

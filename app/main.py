@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from . import local_models, model_control, model_registry
 from .jobs import job_manager
 from .llm_client import LLMClient
-from .models import CaptionFolderRequest, JobCreateRequest, LLMConfig
+from .models import CaptionFolderRequest, DedupFolderRequest, JobCreateRequest, LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,17 @@ async def caption_folder(req: CaptionFolderRequest):
         raise HTTPException(400, "trigger word is enabled but empty")
     state = job_manager.create_caption_folder_job(req)
     asyncio.create_task(job_manager.run_caption_folder_job(state))
+    return {"job_id": state.id}
+
+
+@app.post("/api/dedup-folder")
+async def dedup_folder(req: DedupFolderRequest):
+    """Find images with byte-identical content in a folder and move every
+    copy but one to the Recycle Bin -- independent of any download job."""
+    if not req.folder.strip():
+        raise HTTPException(400, "folder is required")
+    state = job_manager.create_dedup_job(req)
+    asyncio.create_task(job_manager.run_dedup_job(state))
     return {"job_id": state.id}
 
 
