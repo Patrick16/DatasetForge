@@ -5,3 +5,4 @@ __pycache__/
 downloads/
 server.log
 .test_*/
+.claude/

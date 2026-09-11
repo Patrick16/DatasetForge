@@ -11,6 +11,7 @@ from app.jobs import JobManager
 from app.models import (
     CaptionFolderRequest,
     CaptioningConfig,
+    DedupFolderRequest,
     FilterConfig,
     JobCreateRequest,
     LLMConfig,
@@ -480,3 +481,147 @@ class TestRunCaptionFolderJob:
 
         assert received["instruction"] is not None
         assert "zog" in received["instruction"]
+
+
+class TestRunDedupJob:
+    def _fake_send2trash(self, monkeypatch, removed: list[str] | None = None, fail_for: set[str] | None = None):
+        """Stand-in for send2trash that actually deletes the file (so tests
+        can assert on real filesystem state afterwards) instead of hitting
+        the real OS Recycle Bin -- optionally raising for specific paths to
+        exercise the failure path."""
+        removed = removed if removed is not None else []
+        fail_for = fail_for or set()
+
+        def fake(path):
+            if path in fail_for:
+                raise OSError(f"simulated failure removing {path}")
+            removed.append(path)
+            Path(path).unlink()
+
+        monkeypatch.setattr(jobs_module, "send2trash", fake)
+        return removed
+
+    async def test_removes_all_but_one_of_a_duplicate_pair(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"same")
+        (tmp_path / "b.jpg").write_bytes(b"same")
+
+        req = DedupFolderRequest(folder=str(tmp_path))
+        state = manager.create_dedup_job(req)
+        await manager.run_dedup_job(state)
+
+        assert state.status == "done"
+        remaining = sorted(p.name for p in tmp_path.glob("*.jpg"))
+        assert remaining == ["a.jpg"]  # alphabetically-first kept, "b.jpg" removed
+
+    async def test_stats_downloaded_is_groups_and_duplicates_is_removed_count(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        for name in ("a1.jpg", "a2.jpg", "a3.jpg"):
+            (tmp_path / name).write_bytes(b"group a")
+        (tmp_path / "b1.jpg").write_bytes(b"group b")
+        (tmp_path / "b2.jpg").write_bytes(b"group b")
+
+        req = DedupFolderRequest(folder=str(tmp_path))
+        state = manager.create_dedup_job(req)
+        await manager.run_dedup_job(state)
+
+        assert state.stats["downloaded"] == 2  # 2 groups
+        assert state.stats["duplicates"] == 3  # 2 removed from group a + 1 from group b
+
+    async def test_orphaned_caption_file_is_removed_alongside_its_image(self, manager, monkeypatch, tmp_path):
+        removed = self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"same")
+        (tmp_path / "b.jpg").write_bytes(b"same")
+        (tmp_path / "b.txt").write_text("stale caption for a duplicate", encoding="utf-8")
+
+        req = DedupFolderRequest(folder=str(tmp_path))
+        state = manager.create_dedup_job(req)
+        await manager.run_dedup_job(state)
+
+        assert str(tmp_path / "b.txt") in removed
+        assert not (tmp_path / "b.txt").exists()
+
+    async def test_keepers_caption_file_is_left_alone(self, manager, monkeypatch, tmp_path):
+        removed = self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"same")
+        (tmp_path / "a.txt").write_text("this caption belongs to the keeper", encoding="utf-8")
+        (tmp_path / "b.jpg").write_bytes(b"same")
+
+        req = DedupFolderRequest(folder=str(tmp_path))
+        state = manager.create_dedup_job(req)
+        await manager.run_dedup_job(state)
+
+        assert str(tmp_path / "a.txt") not in removed
+        assert (tmp_path / "a.txt").exists()
+
+    async def test_no_duplicates_finishes_done_with_a_warning_and_zero_stats(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"one")
+        (tmp_path / "b.jpg").write_bytes(b"two")
+
+        req = DedupFolderRequest(folder=str(tmp_path))
+        state = manager.create_dedup_job(req)
+        await manager.run_dedup_job(state)
+
+        assert state.status == "done"
+        assert state.stats["downloaded"] == 0
+        assert state.stats["duplicates"] == 0
+        warnings = [e for e in state.events if e.type == "warning"]
+        assert any("No duplicate images found" in e.data["message"] for e in warnings)
+
+    async def test_missing_folder_reports_error_status(self, manager, tmp_path):
+        req = DedupFolderRequest(folder=str(tmp_path / "nope"))
+        state = manager.create_dedup_job(req)
+        await manager.run_dedup_job(state)
+        assert state.status == "error"
+
+    async def test_cancellation_stops_before_removing_more_groups(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        (tmp_path / "a1.jpg").write_bytes(b"group a")
+        (tmp_path / "a2.jpg").write_bytes(b"group a")
+        (tmp_path / "b1.jpg").write_bytes(b"group b")
+        (tmp_path / "b2.jpg").write_bytes(b"group b")
+
+        req = DedupFolderRequest(folder=str(tmp_path))
+        state = manager.create_dedup_job(req)
+        state.cancel_requested = True
+        await manager.run_dedup_job(state)
+
+        assert state.status == "cancelled"
+        assert state.stats["duplicates"] == 0  # nothing removed once already cancelled
+
+    async def test_removal_failure_is_counted_as_an_error_and_does_not_stop_the_job(
+        self, manager, monkeypatch, tmp_path
+    ):
+        (tmp_path / "a.jpg").write_bytes(b"group a")
+        (tmp_path / "a2.jpg").write_bytes(b"group a")
+        (tmp_path / "b1.jpg").write_bytes(b"group b")
+        (tmp_path / "b2.jpg").write_bytes(b"group b")
+        self._fake_send2trash(monkeypatch, fail_for={str(tmp_path / "a2.jpg")})
+
+        req = DedupFolderRequest(folder=str(tmp_path))
+        state = manager.create_dedup_job(req)
+        await manager.run_dedup_job(state)
+
+        assert state.status == "done"
+        assert state.stats["errors"] == 1
+        assert state.stats["duplicates"] == 1  # the other group's duplicate still got removed
+        assert (tmp_path / "a2.jpg").exists()  # the failed removal is still there
+        assert not (tmp_path / "b2.jpg").exists()
+
+    async def test_recursive_flag_controls_whether_subfolders_are_scanned(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"same")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "b.jpg").write_bytes(b"same")
+
+        non_recursive = DedupFolderRequest(folder=str(tmp_path), recursive=False)
+        state = manager.create_dedup_job(non_recursive)
+        await manager.run_dedup_job(state)
+        assert state.stats["duplicates"] == 0
+
+        recursive = DedupFolderRequest(folder=str(tmp_path), recursive=True)
+        state2 = manager.create_dedup_job(recursive)
+        await manager.run_dedup_job(state2)
+        assert state2.stats["duplicates"] == 1

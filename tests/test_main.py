@@ -239,6 +239,31 @@ class TestCaptionFolderValidation:
         assert "job_id" in resp.json()
 
 
+class TestDedupFolderValidation:
+    def test_rejects_empty_folder(self, client):
+        resp = client.post("/api/dedup-folder", json={"folder": "  "})
+        assert resp.status_code == 400
+
+    def test_accepts_a_valid_request(self, client, monkeypatch):
+        async def fake_run(state):
+            pass
+
+        monkeypatch.setattr(job_manager, "run_dedup_job", fake_run)
+        resp = client.post("/api/dedup-folder", json={"folder": "C:/data"})
+        assert resp.status_code == 200
+        assert "job_id" in resp.json()
+
+    def test_recursive_flag_is_passed_through(self, client, monkeypatch):
+        captured = {}
+
+        async def fake_run(state):
+            captured["recursive"] = state.request.recursive
+
+        monkeypatch.setattr(job_manager, "run_dedup_job", fake_run)
+        resp = client.post("/api/dedup-folder", json={"folder": "C:/data", "recursive": True})
+        assert resp.status_code == 200
+
+
 class TestJobStatusAndImages:
     def test_get_unknown_job_is_404(self, client):
         assert client.get("/api/jobs/doesnotexist").status_code == 404

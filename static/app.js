@@ -216,6 +216,7 @@ const FIELD_IDS = [
   "cap_enabled", "cap_method", "cap_provider", "cap_model", "cap_base_url", "cap_api_key", "cap_timeout", "cap_models_folder", "cap_disable_reasoning",
   "cap_wd14_model", "cap_wd14_general_threshold", "cap_wd14_character_threshold",
   "capfolder_path", "capfolder_recursive", "capfolder_overwrite",
+  "dedup_path", "dedup_recursive",
   "trigger_enabled", "trigger_word", "trigger_role", "trigger_custom",
 ];
 
@@ -402,11 +403,12 @@ function buildWD14Config() {
 // standalone "caption a folder" action -- only one can run at a time) ----
 let ws = null;
 let currentJobId = null;
-let currentJobKind = "download"; // "download" | "caption"
+let currentJobKind = "download"; // "download" | "caption" | "dedup"
 
 function setActionButtonsDisabled(disabled) {
   $("start-btn").disabled = disabled;
   $("capfolder-btn").disabled = disabled;
+  $("dedup-btn").disabled = disabled;
   $("cancel-btn").disabled = !disabled;
 }
 
@@ -416,8 +418,15 @@ function applyJobKindLabels(kind) {
     $("stat-duplicates-row").hidden = true;
     $("stat-filtered-row").hidden = true;
     $("thumbs-title").textContent = "Captioned images";
+  } else if (kind === "dedup") {
+    $("stat-downloaded-label").textContent = "Duplicate groups";
+    $("stat-duplicates-label").textContent = "Removed";
+    $("stat-duplicates-row").hidden = false;
+    $("stat-filtered-row").hidden = true;
+    $("thumbs-title").textContent = "Kept files";
   } else {
     $("stat-downloaded-label").textContent = "Downloaded";
+    $("stat-duplicates-label").textContent = "Duplicates";
     $("stat-duplicates-row").hidden = false;
     $("stat-filtered-row").hidden = false;
     $("thumbs-title").textContent = "Downloaded images";
@@ -523,7 +532,9 @@ function handleEvent(ev) {
       // anything else is a genuine error (network failure, bad data, ...).
       const tag = ev.data.duplicate ? "DUP" : ev.data.filtered ? "FLT" : "ERR";
       const key = ev.data.duplicate ? "duplicates" : ev.data.filtered ? "filtered" : "errors";
-      logLine(`${tag} [${ev.data.query}] ${ev.data.url} - ${ev.data.error}`, ev.data.filtered ? "info" : "err");
+      // Duplicates and filtered-out results are expected/working-as-intended
+      // outcomes, not failures -- only a real error gets the alarming red.
+      logLine(`${tag} [${ev.data.query}] ${ev.data.url} - ${ev.data.error}`, ev.data.duplicate || ev.data.filtered ? "info" : "err");
       updateStats(bumpStats({ [key]: 1 }));
       break;
     }
@@ -656,6 +667,38 @@ $("capfolder-btn").addEventListener("click", async () => {
   }
 
   await startJob("/api/caption-folder", buildCaptionFolderRequest(), "caption");
+});
+
+// ---- standalone duplicate removal ----
+function buildDedupFolderRequest() {
+  return {
+    folder: $("dedup_path").value.trim(),
+    recursive: $("dedup_recursive").checked,
+  };
+}
+
+$("dedup-btn").addEventListener("click", async () => {
+  saveForm();
+  const hint = $("dedup-hint");
+  hint.textContent = "";
+  hint.className = "hint";
+
+  const folder = $("dedup_path").value.trim();
+  if (!folder) {
+    alert("Please set a folder to deduplicate");
+    return;
+  }
+  // A bulk-delete action deserves an explicit confirmation even though it's
+  // recoverable (Recycle Bin, not a permanent delete) -- the exact count
+  // isn't known until the scan runs, so this confirms the action itself,
+  // not a specific number.
+  const proceed = confirm(
+    `This will scan "${folder}" for images with identical content and move every copy but one to the Recycle Bin ` +
+    "(along with any orphaned .txt caption). This can be undone from the Recycle Bin, but not from here. Continue?"
+  );
+  if (!proceed) return;
+
+  await startJob("/api/dedup-folder", buildDedupFolderRequest(), "dedup");
 });
 
 document.getElementById("cancel-btn").addEventListener("click", async () => {

@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
+from send2trash import send2trash
 
 from .captioning import build_captioner
-from .download import download_image, sanitize_folder_name
+from .dedup import find_duplicate_groups
+from .download import IMAGE_EXTENSIONS, download_image, sanitize_folder_name
 from .llm_client import LLMClient
-from .models import CaptionFolderRequest, JobCreateRequest
+from .models import CaptionFolderRequest, DedupFolderRequest, JobCreateRequest
 from .search import build_search_provider
 
 logger = logging.getLogger(__name__)
@@ -24,8 +26,6 @@ OVERFETCH_MULTIPLIER = 4
 OVERFETCH_MIN_EXTRA = 10
 MAX_SEARCH_FETCH = 150
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
-
 
 @dataclass
 class JobEvent:
@@ -36,8 +36,8 @@ class JobEvent:
 @dataclass
 class JobState:
     id: str
-    request: JobCreateRequest | CaptionFolderRequest
-    kind: str = "download"  # "download" | "caption_folder"
+    request: JobCreateRequest | CaptionFolderRequest | DedupFolderRequest
+    kind: str = "download"  # "download" | "caption_folder" | "dedup"
     status: str = "pending"  # pending, running, done, error, cancelled
     events: list[JobEvent] = field(default_factory=list)
     subscribers: list[asyncio.Queue] = field(default_factory=list)
@@ -66,6 +66,12 @@ class JobManager:
     def create_caption_folder_job(self, request: CaptionFolderRequest) -> JobState:
         job_id = uuid.uuid4().hex[:12]
         state = JobState(id=job_id, kind="caption_folder", request=request)
+        self.jobs[job_id] = state
+        return state
+
+    def create_dedup_job(self, request: DedupFolderRequest) -> JobState:
+        job_id = uuid.uuid4().hex[:12]
+        state = JobState(id=job_id, kind="dedup", request=request)
         self.jobs[job_id] = state
         return state
 
@@ -290,6 +296,72 @@ class JobManager:
             await self.emit(state, "warning", {"message": f"Job failed: {e}"})
         finally:
             await captioner.aclose()
+            await self.emit(state, "status", {"status": state.status, "stats": state.stats})
+
+    async def run_dedup_job(self, state: JobState) -> None:
+        """Find images with byte-identical content in a folder and move every
+        copy but one to the Recycle Bin -- independent of any download job."""
+        req: DedupFolderRequest = state.request
+        state.status = "running"
+        await self.emit(state, "status", {"status": "running"})
+
+        try:
+            root = Path(req.folder)
+            if not root.is_dir():
+                raise ValueError(f"Folder not found: {req.folder}")
+
+            groups = await asyncio.to_thread(find_duplicate_groups, root, req.recursive)
+            if not groups:
+                await self.emit(state, "warning", {"message": "No duplicate images found."})
+
+            for keeper, *dupes in groups:
+                if state.cancel_requested:
+                    break
+
+                file_index = len(state.downloaded_files)
+                state.downloaded_files.append(keeper)
+                state.stats["downloaded"] += 1
+                await self.emit(
+                    state, "downloaded",
+                    {
+                        "query": f"{len(dupes)} duplicate{'s' if len(dupes) != 1 else ''} found",
+                        "path": str(keeper), "url": "", "index": file_index,
+                    },
+                )
+
+                for dupe in dupes:
+                    if state.cancel_requested:
+                        break
+                    try:
+                        await asyncio.to_thread(send2trash, str(dupe))
+                        # A duplicate image's own caption file (if any) is now
+                        # orphaned -- send it along rather than leave it behind
+                        # pointing at nothing.
+                        txt_path = dupe.with_suffix(".txt")
+                        if txt_path.exists():
+                            await asyncio.to_thread(send2trash, str(txt_path))
+                        state.stats["duplicates"] += 1
+                        await self.emit(
+                            state, "skip",
+                            {
+                                "query": keeper.name, "url": str(dupe),
+                                "error": f"duplicate of {keeper.name} -- moved to Recycle Bin",
+                                "duplicate": True, "filtered": False,
+                            },
+                        )
+                    except Exception as e:
+                        state.stats["errors"] += 1
+                        await self.emit(
+                            state, "warning",
+                            {"message": f"Could not remove duplicate {dupe.name}: {e}"},
+                        )
+
+            state.status = "cancelled" if state.cancel_requested else "done"
+        except Exception as e:
+            logger.exception("Dedup job %s failed", state.id)
+            state.status = "error"
+            await self.emit(state, "warning", {"message": f"Job failed: {e}"})
+        finally:
             await self.emit(state, "status", {"status": state.status, "stats": state.stats})
 
 
