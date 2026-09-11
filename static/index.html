@@ -4,209 +4,298 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DatasetForge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="top-bar">
-      <div>
-        <h1>DatasetForge</h1>
-        <p class="sub">Download images from the web by search query into a local folder, with optional LLM query expansion and vision captioning.</p>
-      </div>
-      <div class="top-bar-actions">
-        <button type="button" id="unload-models-btn">&#129529; Unload models from memory</button>
-        <div class="hint" id="unload-models-hint"></div>
-      </div>
+  <header class="app-header">
+    <div class="app-title-block">
+      <h1 class="app-title">DatasetForge</h1>
+      <p class="app-tagline">Download, caption, and de-duplicate an image dataset — all scoped to one active folder.</p>
     </div>
+    <div class="header-actions">
+      <button type="button" id="unload-models-btn">&#129529; Unload models from memory</button>
+      <div class="hint" id="unload-models-hint"></div>
+    </div>
+  </header>
 
-    <form id="job-form">
-      <section class="card">
-        <h2>Queries</h2>
-        <label>Search queries (one per line)</label>
-        <textarea id="queries" rows="4" placeholder="cat on a windowsill&#10;mountains at sunset&#10;coffee cup on a table" required></textarea>
-
-        <div class="query-actions">
-          <button type="button" id="generate-btn" disabled>&#10024; Generate variations with LLM</button>
-          <span class="hint" id="generate-hint"></span>
-        </div>
-
-        <div class="row">
-          <div class="field">
-            <label>Images per query</label>
-            <input type="number" id="n_per_query" value="10" min="1" max="200" required />
+  <div class="shell">
+    <!-- ============ LEFT RAIL ============ -->
+    <aside class="rail rail-left">
+      <section class="rail-section">
+        <p class="eyebrow">Active folder</p>
+        <div class="folder-block">
+          <div class="folder-path-row">
+            <span class="folder-icon">&#128193;</span>
+            <span class="folder-path empty" id="active-folder-path">No folder selected yet</span>
           </div>
-          <div class="field">
-            <label>Parallel downloads</label>
-            <input type="number" id="concurrency" value="8" min="1" max="32" required />
-          </div>
+          <p class="folder-meta" id="active-folder-meta"></p>
+          <button type="button" class="btn" id="open-folder-btn">&#128193; Open folder&hellip;</button>
         </div>
-
-        <div class="field">
-          <label>Save to folder</label>
-          <div class="input-with-button">
-            <input type="text" id="output_folder" placeholder="C:\Users\me\Pictures\downloaded" required />
-            <button type="button" class="browse-btn" data-target="output_folder" data-title="Select download folder">Browse&hellip;</button>
-          </div>
-        </div>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="query_subfolders" checked />
-          Create a subfolder for each query
-        </label>
+        <p class="hint-text">Every action below — download, caption, dedupe — runs against this folder. Opening a new one reloads the gallery from what's already on disk.</p>
       </section>
 
-      <section class="card">
-        <h2>Search source</h2>
-        <label>Provider</label>
-        <select id="search_provider">
-          <option value="duckduckgo">DuckDuckGo (default)</option>
-          <option value="yandex">Yandex Images</option>
-          <option value="google">Google Images (experimental)</option>
-          <option value="booru">Booru board</option>
-        </select>
-        <p class="card-note" id="search-provider-note"></p>
+      <form id="job-form">
+        <section class="rail-section">
+          <p class="eyebrow">Download</p>
+          <label for="queries">Search queries (one per line)</label>
+          <textarea id="queries" class="queries-input" rows="4" placeholder="cat on a windowsill&#10;mountains at sunset&#10;coffee cup on a table" required></textarea>
 
-        <div id="booru_block" class="llm-block">
+          <div class="row">
+            <div class="field">
+              <label for="n_per_query">Images per query</label>
+              <input type="number" id="n_per_query" value="10" min="1" max="200" required />
+            </div>
+            <div class="field">
+              <label for="concurrency">Parallel downloads</label>
+              <input type="number" id="concurrency" value="8" min="1" max="32" required />
+            </div>
+          </div>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="query_subfolders" checked />
+            Create a subfolder for each query
+          </label>
+
+          <div class="btn-stack">
+            <button type="button" id="generate-btn" class="btn btn-sm" disabled>&#10024; Generate variations with LLM</button>
+            <span class="hint" id="generate-hint"></span>
+            <button type="submit" id="start-btn" class="btn btn-primary">Start download</button>
+          </div>
+        </section>
+      </form>
+
+      <section class="rail-section">
+        <p class="eyebrow">Captioning</p>
+        <label class="checkbox-row">
+          <input type="checkbox" id="capfolder_recursive" />
+          Include subfolders
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="capfolder_overwrite" />
+          Overwrite existing .txt files
+        </label>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="trigger_enabled" />
+          Use a trigger word
+        </label>
+        <div id="trigger_block" class="llm-block">
+          <p class="hint-text">A trigger word is a token every caption should consistently include — common for LoRA/Dreambooth training sets. With the Vision LLM method, what it stands for changes how it should read in a sentence. With WD14 Tagger, it's simply prepended as the first tag.</p>
           <div class="field">
-            <label>Board</label>
-            <select id="booru_site">
-              <option value="e621">e621 (no account needed)</option>
-              <option value="gelbooru">Gelbooru (needs API key + user ID)</option>
-              <option value="rule34">Rule34.xxx (needs API key + user ID)</option>
-              <option value="danbooru">Danbooru (needs login + API key)</option>
+            <label for="trigger_word">Trigger word</label>
+            <input type="text" id="trigger_word" placeholder="e.g. ohwx, mystyle42, jumpingpose" />
+          </div>
+          <div class="field">
+            <label for="trigger_role">What does it represent?</label>
+            <select id="trigger_role">
+              <option value="subject">A specific subject (person / character / object)</option>
+              <option value="style">An art or visual style</option>
+              <option value="action">An action or pose</option>
+              <option value="custom">Something else&hellip;</option>
             </select>
+          </div>
+          <div class="field" id="trigger_custom_field" hidden>
+            <label for="trigger_custom">How should the model use it? <span class="optional">(use <code>{word}</code> for the trigger word itself)</span></label>
+            <textarea id="trigger_custom" rows="2" placeholder="e.g. {word} is a specific lighting setup -- mention the image uses {word} lighting."></textarea>
+          </div>
+        </div>
+
+        <div class="btn-stack">
+          <button type="button" id="capfolder-btn" class="btn">&#128221; Caption this folder</button>
+          <span class="hint" id="capfolder-hint"></span>
+        </div>
+      </section>
+
+      <section class="rail-section">
+        <p class="eyebrow">Duplicates</p>
+        <label class="checkbox-row">
+          <input type="checkbox" id="dedup_recursive" />
+          Include subfolders
+        </label>
+        <div class="btn-stack">
+          <button type="button" id="dedup-btn" class="btn btn-outline-danger">&#128465; Remove duplicates</button>
+          <span class="hint" id="dedup-hint"></span>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ============ CENTER GALLERY ============ -->
+    <main class="gallery-pane">
+      <section class="expanded-card" id="expanded-card" hidden>
+        <h2>Generated queries</h2>
+        <div id="expanded-list"></div>
+      </section>
+
+      <div class="gallery-toolbar">
+        <h2 id="gallery-title">No folder open</h2>
+        <span class="muted" id="gallery-meta"></span>
+      </div>
+      <div class="thumb-grid" id="thumb-grid"></div>
+      <p class="gallery-empty" id="gallery-empty">Open a folder on the left to see its images here.</p>
+    </main>
+
+    <!-- ============ RIGHT RAIL ============ -->
+    <aside class="rail rail-right">
+      <p class="eyebrow">Settings</p>
+
+      <div class="accordion open" data-accordion>
+        <button type="button" class="accordion-head" data-accordion-toggle>
+          <span class="accordion-title">Search</span>
+          <span class="chev">&#8964;</span>
+        </button>
+        <div class="accordion-body">
+          <div class="field">
+            <label for="search_provider">Provider</label>
+            <select id="search_provider">
+              <option value="duckduckgo">DuckDuckGo (default)</option>
+              <option value="yandex">Yandex Images</option>
+              <option value="google">Google Images (experimental)</option>
+              <option value="booru">Booru board</option>
+            </select>
+            <p class="hint-text" id="search-provider-note"></p>
+          </div>
+
+          <div id="booru_block" class="llm-block">
+            <div class="field">
+              <label for="booru_site">Board</label>
+              <select id="booru_site">
+                <option value="e621">e621 (no account needed)</option>
+                <option value="gelbooru">Gelbooru (needs API key + user ID)</option>
+                <option value="rule34">Rule34.xxx (needs API key + user ID)</option>
+                <option value="danbooru">Danbooru (needs login + API key)</option>
+              </select>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>API key <span class="optional">(gelbooru/rule34/danbooru)</span></label>
+                <input type="password" id="booru_api_key" placeholder="..." />
+              </div>
+              <div class="field">
+                <label>User ID <span class="optional">(gelbooru/rule34)</span></label>
+                <input type="text" id="booru_user_id" placeholder="..." />
+              </div>
+            </div>
+            <div class="field">
+              <label>Login <span class="optional">(danbooru only)</span></label>
+              <input type="text" id="booru_login" placeholder="your danbooru username" />
+            </div>
+            <p class="hint-text">e621 needs no setup. Gelbooru/Rule34: free account &rarr; Account &rarr; API Access Credentials. Danbooru: login + API key -- but even authenticated requests hit a Cloudflare bot-check on some networks, so treat it as best-effort.</p>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="min_width">Min. width (px)</label>
+              <input type="number" id="min_width" value="200" min="0" />
+            </div>
+            <div class="field">
+              <label for="min_height">Min. height (px)</label>
+              <input type="number" id="min_height" value="200" min="0" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Allowed formats</label>
+            <div class="format-chips" id="formats">
+              <label class="format-chip"><input type="checkbox" value="jpg" checked /> jpg</label>
+              <label class="format-chip"><input type="checkbox" value="png" checked /> png</label>
+              <label class="format-chip"><input type="checkbox" value="webp" checked /> webp</label>
+              <label class="format-chip"><input type="checkbox" value="gif" checked /> gif</label>
+              <label class="format-chip"><input type="checkbox" value="bmp" /> bmp</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="safesearch">SafeSearch</label>
+            <select id="safesearch">
+              <option value="off">Off</option>
+              <option value="moderate" selected>Moderate (search engine default)</option>
+              <option value="on">On (strict)</option>
+            </select>
+            <p class="hint-text">Applies at the search source itself, not a local filter — excluded results never reach this app. For Booru this maps to a <code>rating:</code> tag instead.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" data-accordion>
+        <button type="button" class="accordion-head" data-accordion-toggle>
+          <span class="checkbox-row inline" data-stop-toggle><input type="checkbox" id="llm_enabled" /></span>
+          <span class="accordion-title">Query generation (LLM)</span>
+          <span class="chev">&#8964;</span>
+        </button>
+        <div class="accordion-body" id="llm_block" hidden>
+          <div class="row">
+            <div class="field">
+              <label for="llm_provider">Provider</label>
+              <select id="llm_provider">
+                <option value="ollama">Ollama (local)</option>
+                <option value="lmstudio">LM Studio (local)</option>
+                <option value="cloud">Cloud API</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="llm_variations">Variations per query</label>
+              <input type="number" id="llm_variations" value="3" min="1" max="20" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="llm_base_url">Base URL</label>
+            <input type="text" id="llm_base_url" value="http://localhost:11434/v1" />
+          </div>
+          <div class="field">
+            <label for="llm_model">Model</label>
+            <div class="input-with-button">
+              <input type="text" id="llm_model" value="qwen2.5:1.5b-instruct" list="llm_model_list" />
+              <button type="button" class="refresh-btn" data-kind="llm">&#8635;</button>
+            </div>
+            <datalist id="llm_model_list"></datalist>
+            <div class="hint" id="llm_model_hint"></div>
+          </div>
+          <div class="field">
+            <label>Models folder <span class="optional">(fallback scan)</span></label>
+            <div class="input-with-button">
+              <input type="text" id="llm_models_folder" placeholder="C:\path\to\your\models" />
+              <button type="button" class="browse-btn" data-target="llm_models_folder" data-title="Select models folder">Browse&hellip;</button>
+            </div>
           </div>
           <div class="row">
             <div class="field">
-              <label>API key <span class="optional">(gelbooru/rule34/danbooru)</span></label>
-              <input type="password" id="booru_api_key" placeholder="..." />
+              <label>API key <span class="optional">(cloud only)</span></label>
+              <input type="password" id="llm_api_key" placeholder="sk-..." />
             </div>
             <div class="field">
-              <label>User ID <span class="optional">(gelbooru/rule34)</span></label>
-              <input type="text" id="booru_user_id" placeholder="..." />
+              <label for="llm_timeout">Timeout (sec)</label>
+              <input type="number" id="llm_timeout" value="180" min="5" max="600" />
             </div>
           </div>
-          <div class="field">
-            <label>Login <span class="optional">(danbooru only)</span></label>
-            <input type="text" id="booru_login" placeholder="your danbooru username" />
-          </div>
-          <p class="card-note">e621 needs no setup. Gelbooru/Rule34: free account &rarr; Account &rarr; API Access Credentials for the key + user ID. Danbooru: same idea (login + API key) -- but even authenticated requests hit a Cloudflare bot-check in testing from some networks, so treat it as best-effort.</p>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Filters</h2>
-        <div class="row">
-          <div class="field">
-            <label>Min. width (px)</label>
-            <input type="number" id="min_width" value="200" min="0" />
-          </div>
-          <div class="field">
-            <label>Min. height (px)</label>
-            <input type="number" id="min_height" value="200" min="0" />
-          </div>
-        </div>
-        <label>Allowed formats</label>
-        <div class="formats" id="formats">
-          <label><input type="checkbox" value="jpg" checked /> jpg</label>
-          <label><input type="checkbox" value="png" checked /> png</label>
-          <label><input type="checkbox" value="webp" checked /> webp</label>
-          <label><input type="checkbox" value="gif" checked /> gif</label>
-          <label><input type="checkbox" value="bmp" /> bmp</label>
-        </div>
-
-        <label>SafeSearch <span class="optional">(applies at the search source itself, not a local filter — excluded results never reach this app. For Booru this maps to a rating: tag instead of a hidden toggle.)</span></label>
-        <select id="safesearch">
-          <option value="off">Off</option>
-          <option value="moderate" selected>Moderate (search engine default)</option>
-          <option value="on">On (strict)</option>
-        </select>
-      </section>
-
-      <section class="card">
-        <div class="block-header">
-          <label class="checkbox-row inline">
-            <input type="checkbox" id="llm_enabled" />
-            Query expansion (LLM)
+          <label class="checkbox-row">
+            <input type="checkbox" id="llm_disable_reasoning" />
+            Disable reasoning/thinking mode
           </label>
+          <p class="hint-text">Some local "thinking" models spend their whole reply budget on hidden reasoning and never answer. This trick works on llama.cpp-based servers (LM Studio, koboldcpp) -- not guaranteed on Ollama or cloud APIs.</p>
         </div>
-        <details class="settings-details">
-          <summary>Settings</summary>
-          <div id="llm_block" class="llm-block">
-            <div class="row">
-              <div class="field">
-                <label>Provider</label>
-                <select id="llm_provider">
-                  <option value="ollama">Ollama (local)</option>
-                  <option value="lmstudio">LM Studio (local)</option>
-                  <option value="cloud">Cloud API</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>Variations per query</label>
-                <input type="number" id="llm_variations" value="3" min="1" max="20" />
-              </div>
-            </div>
-            <div class="field">
-              <label>Base URL</label>
-              <input type="text" id="llm_base_url" value="http://localhost:11434/v1" />
-            </div>
-            <div class="field">
-              <label>Model</label>
-              <div class="input-with-button">
-                <input type="text" id="llm_model" value="qwen2.5:1.5b-instruct" list="llm_model_list" />
-                <button type="button" class="refresh-btn" data-kind="llm">&#8635; Refresh</button>
-              </div>
-              <datalist id="llm_model_list"></datalist>
-              <div class="hint" id="llm_model_hint"></div>
-            </div>
-            <div class="field">
-              <label>Models folder <span class="optional">(optional — scanned for .gguf files as a fallback if the server above isn't reachable)</span></label>
-              <div class="input-with-button">
-                <input type="text" id="llm_models_folder" placeholder="C:\path\to\your\models" />
-                <button type="button" class="browse-btn" data-target="llm_models_folder" data-title="Select models folder">Browse&hellip;</button>
-              </div>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label>API key <span class="optional">(cloud provider only)</span></label>
-                <input type="password" id="llm_api_key" placeholder="sk-..." />
-              </div>
-              <div class="field">
-                <label>Response timeout (sec)</label>
-                <input type="number" id="llm_timeout" value="180" min="5" max="600" />
-              </div>
-            </div>
-            <label class="checkbox-row">
-              <input type="checkbox" id="llm_disable_reasoning" />
-              Disable reasoning/thinking mode <span class="optional">(local llama.cpp servers only — see hint)</span>
-            </label>
-            <p class="card-note">Some local "thinking" models spend their whole reply budget on hidden reasoning and never actually answer. This tricks llama.cpp-based servers (LM Studio, text-generation-webui, koboldcpp) into skipping it — not guaranteed to work on Ollama or cloud APIs.</p>
+      </div>
+
+      <div class="accordion" data-accordion>
+        <button type="button" class="accordion-head" data-accordion-toggle>
+          <span class="checkbox-row inline" data-stop-toggle><input type="checkbox" id="cap_enabled" /></span>
+          <span class="accordion-title">Captioning (LLM)</span>
+          <span class="chev">&#8964;</span>
+        </button>
+        <div class="accordion-body" hidden>
+          <div class="field">
+            <label for="cap_method">Method</label>
+            <select id="cap_method">
+              <option value="vision_llm">Vision LLM (natural-language caption)</option>
+              <option value="wd14">WD14 Tagger (booru-style tags, local)</option>
+            </select>
+            <p class="hint-text" id="cap-method-note"></p>
           </div>
-        </details>
-      </section>
 
-      <section class="card">
-        <div class="block-header">
-          <label class="checkbox-row inline">
-            <input type="checkbox" id="cap_enabled" />
-            Image captioning
-          </label>
-        </div>
-        <div class="field">
-          <label>Method</label>
-          <select id="cap_method">
-            <option value="vision_llm">Vision LLM (natural-language caption)</option>
-            <option value="wd14">WD14 Tagger (booru-style tags, runs locally, no server needed)</option>
-          </select>
-        </div>
-        <p class="card-note" id="cap-method-note"></p>
-
-        <details class="settings-details">
-          <summary>Settings</summary>
           <div id="cap_vision_block" class="llm-block">
             <div class="field">
-              <label>Provider</label>
+              <label for="cap_provider">Provider</label>
               <select id="cap_provider">
                 <option value="ollama">Ollama (local)</option>
                 <option value="lmstudio">LM Studio (local)</option>
@@ -214,20 +303,20 @@
               </select>
             </div>
             <div class="field">
-              <label>Base URL</label>
+              <label for="cap_base_url">Base URL</label>
               <input type="text" id="cap_base_url" value="http://localhost:11434/v1" />
             </div>
             <div class="field">
-              <label>Model <span class="optional">(needs vision support)</span></label>
+              <label for="cap_model">Model <span class="optional">(needs vision support)</span></label>
               <div class="input-with-button">
                 <input type="text" id="cap_model" value="moondream" list="cap_model_list" />
-                <button type="button" class="refresh-btn" data-kind="cap">&#8635; Refresh</button>
+                <button type="button" class="refresh-btn" data-kind="cap">&#8635;</button>
               </div>
               <datalist id="cap_model_list"></datalist>
               <div class="hint" id="cap_model_hint"></div>
             </div>
             <div class="field">
-              <label>Models folder <span class="optional">(optional — scanned for .gguf files as a fallback if the server above isn't reachable)</span></label>
+              <label>Models folder <span class="optional">(fallback scan)</span></label>
               <div class="input-with-button">
                 <input type="text" id="cap_models_folder" placeholder="C:\path\to\your\models" />
                 <button type="button" class="browse-btn" data-target="cap_models_folder" data-title="Select models folder">Browse&hellip;</button>
@@ -235,158 +324,65 @@
             </div>
             <div class="row">
               <div class="field">
-                <label>API key <span class="optional">(cloud provider only)</span></label>
+                <label>API key <span class="optional">(cloud only)</span></label>
                 <input type="password" id="cap_api_key" placeholder="sk-..." />
               </div>
               <div class="field">
-                <label>Response timeout (sec)</label>
+                <label for="cap_timeout">Timeout (sec)</label>
                 <input type="number" id="cap_timeout" value="180" min="5" max="600" />
               </div>
             </div>
             <label class="checkbox-row">
               <input type="checkbox" id="cap_disable_reasoning" />
-              Disable reasoning/thinking mode <span class="optional">(local llama.cpp servers only — see hint)</span>
+              Disable reasoning/thinking mode
             </label>
-            <p class="card-note">Some local "thinking" vision models spend their whole reply budget on hidden reasoning instead of a caption. This tricks llama.cpp-based servers (LM Studio, text-generation-webui, koboldcpp) into skipping it — not guaranteed to work on Ollama or cloud APIs.</p>
+            <p class="hint-text">Some local "thinking" vision models spend their whole reply budget on hidden reasoning instead of a caption. Same llama.cpp-only trick as query generation.</p>
           </div>
 
           <div id="cap_wd14_block" class="llm-block">
             <div class="field">
-              <label>Model <span class="optional">(preset, or any compatible Hugging Face repo id)</span></label>
+              <label>Model <span class="optional">(preset, or any compatible HF repo id)</span></label>
               <input type="text" id="cap_wd14_model" value="wd-vit-tagger-v3" list="wd14_model_list" />
               <datalist id="wd14_model_list">
                 <option value="wd-vit-tagger-v3">Vit (smallest, fastest, default)</option>
                 <option value="wd-convnext-tagger-v3">ConvNeXt</option>
-                <option value="wd-swinv2-tagger-v3">SwinV2 (commonly recommended balance)</option>
-                <option value="wd-eva02-large-tagger-v3">Eva02 Large (largest, most accurate)</option>
+                <option value="wd-swinv2-tagger-v3">SwinV2 (balance)</option>
+                <option value="wd-eva02-large-tagger-v3">Eva02 Large (largest)</option>
               </datalist>
             </div>
             <div class="row">
               <div class="field">
-                <label>General tag threshold</label>
+                <label for="cap_wd14_general_threshold">General threshold</label>
                 <input type="number" id="cap_wd14_general_threshold" value="0.35" min="0" max="1" step="0.05" />
               </div>
               <div class="field">
-                <label>Character tag threshold</label>
+                <label for="cap_wd14_character_threshold">Character threshold</label>
                 <input type="number" id="cap_wd14_character_threshold" value="0.85" min="0" max="1" step="0.05" />
               </div>
             </div>
-            <p class="card-note">Runs fully locally via ONNX Runtime -- no Ollama/LM Studio/cloud API needed. First use downloads the model from Hugging Face (roughly 50&ndash;800MB depending on the preset) and caches it; every run after that is fast (confirmed live: ~0.2s per image on CPU for the default preset once loaded).</p>
-          </div>
-        </details>
-
-        <div class="folder-caption-block">
-          <h3>Caption an existing folder</h3>
-          <p class="card-note">Captions every image already in a folder, independent of any download above — uses the Method and Settings configured above (Vision LLM or WD14 Tagger).</p>
-
-          <div class="field">
-            <label>Folder to caption</label>
-            <div class="input-with-button">
-              <input type="text" id="capfolder_path" placeholder="C:\path\to\images" />
-              <button type="button" class="browse-btn" data-target="capfolder_path" data-title="Select folder to caption">Browse&hellip;</button>
-            </div>
-          </div>
-
-          <div class="row">
-            <label class="checkbox-row">
-              <input type="checkbox" id="capfolder_recursive" />
-              Include subfolders
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="capfolder_overwrite" />
-              Overwrite existing .txt files
-            </label>
-          </div>
-
-          <label class="checkbox-row">
-            <input type="checkbox" id="trigger_enabled" />
-            Use a trigger word
-          </label>
-          <div id="trigger_block" class="llm-block">
-            <p class="card-note">A trigger word is a token every caption should consistently include — common for LoRA/Dreambooth training sets. With the Vision LLM method, what it stands for changes how it should read in a sentence, so tell us its role below. With WD14 Tagger, it's simply prepended as the first tag regardless of role (a flat tag list doesn't have sentence grammar to fit a role into).</p>
-            <div class="row">
-              <div class="field">
-                <label>Trigger word</label>
-                <input type="text" id="trigger_word" placeholder="e.g. ohwx, mystyle42, jumpingpose" />
-              </div>
-              <div class="field">
-                <label>What does it represent?</label>
-                <select id="trigger_role">
-                  <option value="subject">A specific subject (person / character / object)</option>
-                  <option value="style">An art or visual style</option>
-                  <option value="action">An action or pose</option>
-                  <option value="custom">Something else&hellip;</option>
-                </select>
-              </div>
-            </div>
-            <div class="field" id="trigger_custom_field" hidden>
-              <label>How should the model use it? <span class="optional">(your own words; use <code>{word}</code> where the trigger word itself should be inserted)</span></label>
-              <textarea id="trigger_custom" rows="2" placeholder="e.g. {word} is a specific lighting setup -- mention the image uses {word} lighting."></textarea>
-            </div>
-          </div>
-
-          <div class="query-actions">
-            <button type="button" id="capfolder-btn">&#128221; Caption this folder</button>
-            <span class="hint" id="capfolder-hint"></span>
+            <p class="hint-text">Runs fully locally via ONNX Runtime -- no server needed. First use downloads the model from Hugging Face and caches it.</p>
           </div>
         </div>
-      </section>
-
-      <section class="card">
-        <h2>Remove duplicate images</h2>
-        <p class="card-note">Scans a folder for images with byte-identical content (exact hash match, same rule used to skip duplicates during a download) and removes every copy but one. Removed files go to the Recycle Bin, not a permanent delete -- and any orphaned <code>.txt</code> caption for a removed duplicate goes with it.</p>
-
-        <div class="field">
-          <label>Folder to deduplicate</label>
-          <div class="input-with-button">
-            <input type="text" id="dedup_path" placeholder="C:\path\to\images" />
-            <button type="button" class="browse-btn" data-target="dedup_path" data-title="Select folder to deduplicate">Browse&hellip;</button>
-          </div>
-        </div>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="dedup_recursive" />
-          Include subfolders
-        </label>
-
-        <div class="query-actions">
-          <button type="button" id="dedup-btn">&#128465; Remove duplicates</button>
-          <span class="hint" id="dedup-hint"></span>
-        </div>
-      </section>
-
-      <div class="actions">
-        <button type="submit" id="start-btn">Start download</button>
-        <button type="button" id="cancel-btn" disabled>Cancel</button>
       </div>
-    </form>
+    </aside>
+  </div>
 
-    <section class="card" id="expanded-card" hidden>
-      <h2>Generated queries</h2>
-      <div id="expanded-list"></div>
-    </section>
-
-    <section class="card" id="progress-card" hidden>
-      <h2>Progress</h2>
-      <div class="stats" id="stats">
+  <!-- ============ FOOTER STATUS BAR ============ -->
+  <footer class="statusbar expanded" id="statusbar">
+    <div class="statusbar-head" id="statusbar-head">
+      <span class="status-badge" id="job-status">idle</span>
+      <div class="status-stats" id="stats">
         <span><span id="stat-downloaded-label">Downloaded</span>: <b id="stat-downloaded">0</b></span>
         <span id="stat-filtered-row" title="Excluded by your format/size filters -- not an error, working as configured">Filtered: <b id="stat-filtered">0</b></span>
         <span>Errors: <b id="stat-errors">0</b></span>
         <span id="stat-duplicates-row"><span id="stat-duplicates-label">Duplicates</span>: <b id="stat-duplicates">0</b></span>
         <span>Captions: <b id="stat-captioned">0</b></span>
-        <span id="job-status" class="status-badge">running</span>
       </div>
-      <details class="settings-details">
-        <summary>Raw log</summary>
-        <div class="log" id="log"></div>
-      </details>
-    </section>
-
-    <section class="card" id="thumbs-card" hidden>
-      <h2 id="thumbs-title">Downloaded images</h2>
-      <div class="thumb-grid" id="thumb-grid"></div>
-    </section>
-  </div>
+      <button type="button" class="btn-danger-ghost" id="cancel-btn" disabled>Cancel</button>
+      <button type="button" class="statusbar-toggle" id="statusbar-toggle" aria-label="Toggle log">&#8963;</button>
+    </div>
+    <div class="log statusbar-log" id="log"></div>
+  </footer>
 
   <script src="/static/app.js"></script>
 </body>

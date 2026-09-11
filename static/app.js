@@ -28,7 +28,7 @@ wireToggle($("trigger_enabled"), $("trigger_block"));
 // is relevant at a time, and the trigger-word note below reads differently
 // depending on which one is active (role-aware prompt vs. flat prepend). ----
 const CAP_METHOD_NOTES = {
-  vision_llm: "Needs a vision-capable model reachable via Ollama/LM Studio/a cloud API -- configure it in Settings below.",
+  vision_llm: "Needs a vision-capable model reachable via Ollama/LM Studio/a cloud API -- configure it below.",
   wd14: "Runs locally via ONNX -- no model server needed. Outputs a comma-separated tag list (e.g. \"solo, blue hair, outdoors\") instead of a sentence.",
 };
 
@@ -70,7 +70,9 @@ function syncSearchProviderUI() {
 $("search_provider").addEventListener("change", syncSearchProviderUI);
 syncSearchProviderUI();
 
-// ---- native folder picker (server-side dialog; browser & server must be on the same machine) ----
+// ---- native folder picker (server-side dialog; browser & server must be on
+// the same machine) -- used both by the generic "browse" buttons (models
+// folders) and, separately, by the active-folder button below. ----
 document.querySelectorAll(".browse-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const targetId = btn.dataset.target;
@@ -114,7 +116,7 @@ async function refreshModels(kind) {
   const btn = document.querySelector(`.refresh-btn[data-kind="${kind}"]`);
 
   btn.disabled = true;
-  btn.textContent = "Refreshing...";
+  btn.textContent = "...";
   hint.textContent = "";
   hint.className = "hint";
 
@@ -145,7 +147,7 @@ async function refreshModels(kind) {
     if (data.server_error) errors.push(`server: ${data.server_error}`);
     if (data.folder_error) errors.push(`folder: ${data.folder_error}`);
     if (parts.length) {
-      hint.textContent = `Found: ${parts.join(", ")}. Pick one from the dropdown below the field.`;
+      hint.textContent = `Found: ${parts.join(", ")}.`;
       hint.classList.add("ok");
       if (errors.length) hint.textContent += ` (${errors.join("; ")})`;
     } else if (errors.length) {
@@ -160,7 +162,7 @@ async function refreshModels(kind) {
     hint.classList.add("error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "↻ Refresh";
+    btn.textContent = "↻";
   }
 }
 document.querySelectorAll(".refresh-btn").forEach((btn) => {
@@ -209,14 +211,14 @@ $("unload-models-btn").addEventListener("click", async () => {
 // ---- persist form state in localStorage (settings only, no downloaded content) ----
 const STORAGE_KEY = "datasetforge:form";
 const FIELD_IDS = [
-  "queries", "n_per_query", "concurrency", "output_folder", "query_subfolders",
+  "queries", "n_per_query", "concurrency", "query_subfolders",
   "search_provider", "booru_site", "booru_api_key", "booru_user_id", "booru_login",
   "min_width", "min_height", "safesearch",
   "llm_enabled", "llm_provider", "llm_variations", "llm_base_url", "llm_model", "llm_api_key", "llm_timeout", "llm_models_folder", "llm_disable_reasoning",
   "cap_enabled", "cap_method", "cap_provider", "cap_model", "cap_base_url", "cap_api_key", "cap_timeout", "cap_models_folder", "cap_disable_reasoning",
   "cap_wd14_model", "cap_wd14_general_threshold", "cap_wd14_character_threshold",
-  "capfolder_path", "capfolder_recursive", "capfolder_overwrite",
-  "dedup_path", "dedup_recursive",
+  "capfolder_recursive", "capfolder_overwrite",
+  "dedup_recursive",
   "trigger_enabled", "trigger_word", "trigger_role", "trigger_custom",
 ];
 
@@ -260,7 +262,159 @@ syncGenerateBtn();
 syncTriggerCustomField();
 syncSearchProviderUI();
 syncCapMethodUI();
-document.getElementById("job-form").addEventListener("change", saveForm);
+document.body.addEventListener("change", (e) => {
+  if (e.target.closest("#job-form, .rail-left, .rail-right")) saveForm();
+});
+
+// ---- right-rail accordions: click the header to expand/collapse. A checkbox
+// sitting inside the header (query-expansion / captioning "enabled" toggles)
+// stops its own clicks from also toggling the accordion. ----
+document.querySelectorAll("[data-accordion]").forEach((acc) => {
+  const toggle = acc.querySelector("[data-accordion-toggle]");
+  const body = acc.querySelector(".accordion-body");
+  toggle.addEventListener("click", () => {
+    const open = acc.classList.toggle("open");
+    body.hidden = !open;
+  });
+});
+document.querySelectorAll("[data-stop-toggle]").forEach((el) => {
+  el.addEventListener("click", (e) => e.stopPropagation());
+});
+
+// ---- footer status bar: collapse to just the stat line, hiding the raw log ----
+$("statusbar-head").addEventListener("click", (e) => {
+  if (e.target.closest("#cancel-btn")) return;
+  $("statusbar").classList.toggle("expanded");
+});
+
+// ---- active folder: every action below (download, caption, dedupe) runs
+// against this one folder, and it's also what the center gallery renders. ----
+const ACTIVE_FOLDER_KEY = "datasetforge:active_folder";
+let activeFolder = localStorage.getItem(ACTIVE_FOLDER_KEY) || "";
+
+function setActiveFolder(folder) {
+  activeFolder = folder;
+  if (folder) localStorage.setItem(ACTIVE_FOLDER_KEY, folder);
+  else localStorage.removeItem(ACTIVE_FOLDER_KEY);
+  renderActiveFolderPath();
+}
+
+function renderActiveFolderPath() {
+  const pathEl = $("active-folder-path");
+  if (activeFolder) {
+    pathEl.textContent = activeFolder;
+    pathEl.title = activeFolder;
+    pathEl.classList.remove("empty");
+  } else {
+    pathEl.textContent = "No folder selected yet";
+    pathEl.title = "";
+    pathEl.classList.add("empty");
+  }
+}
+
+function folderBaseName(folder) {
+  const parts = folder.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || folder;
+}
+
+// Loads (or reloads) the gallery from whatever's on disk in `activeFolder`
+// right now -- called on open, after each job's terminal status, and
+// (debounced) while a job is progressing, so newly written files/captions
+// show up without a manual refresh.
+async function loadGallery() {
+  const grid = $("thumb-grid");
+  const empty = $("gallery-empty");
+  const title = $("gallery-title");
+  const meta = $("gallery-meta");
+  const folderMeta = $("active-folder-meta");
+
+  if (!activeFolder) {
+    grid.innerHTML = "";
+    empty.hidden = false;
+    empty.textContent = "Open a folder on the left to see its images here.";
+    title.textContent = "No folder open";
+    meta.textContent = "";
+    folderMeta.textContent = "";
+    return;
+  }
+
+  title.textContent = folderBaseName(activeFolder);
+  try {
+    const resp = await fetch(`/api/browse-folder?folder=${encodeURIComponent(activeFolder)}`);
+    const data = await resp.json();
+    if (!resp.ok) {
+      grid.innerHTML = "";
+      empty.hidden = false;
+      empty.textContent = `Could not read this folder: ${data.detail || resp.statusText}`;
+      meta.textContent = "";
+      folderMeta.textContent = "";
+      return;
+    }
+    meta.textContent = `${data.total} image${data.total === 1 ? "" : "s"} · ${data.captioned} captioned`;
+    folderMeta.innerHTML = data.total
+      ? `<b>${data.total}</b> files · <b>${data.captioned}</b> captioned`
+      : "Empty folder so far";
+
+    if (!data.files.length) {
+      grid.innerHTML = "";
+      empty.hidden = false;
+      empty.textContent = "No images in this folder yet.";
+      return;
+    }
+    empty.hidden = true;
+    grid.innerHTML = data.files.map((f) => `
+      <figure class="thumb-card">
+        <div class="thumb-img"><img src="/api/local-image?path=${encodeURIComponent(f.path)}" loading="lazy" alt="${escapeHtml(f.name)}" /></div>
+        <figcaption class="thumb-body">
+          <div class="thumb-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+          <div class="thumb-caption ${f.caption ? "" : "empty"}">${f.caption ? escapeHtml(f.caption) : "No caption yet"}</div>
+        </figcaption>
+      </figure>
+    `).join("");
+  } catch (err) {
+    empty.hidden = false;
+    empty.textContent = "Request failed: " + err;
+  }
+}
+
+let galleryReloadTimer = null;
+function scheduleGalleryReload(delay = 700) {
+  if (!activeFolder) return;
+  clearTimeout(galleryReloadTimer);
+  galleryReloadTimer = setTimeout(loadGallery, delay);
+}
+
+$("open-folder-btn").addEventListener("click", async () => {
+  const btn = $("open-folder-btn");
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "...";
+  try {
+    const resp = await fetch("/api/pick-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initial_dir: activeFolder || null, title: "Select the active folder" }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      alert("Folder picker unavailable: " + (err.detail || resp.statusText));
+      return;
+    }
+    const { folder } = await resp.json();
+    if (folder) {
+      setActiveFolder(folder);
+      await loadGallery();
+    }
+  } catch (err) {
+    alert("Could not reach the server for the folder picker: " + err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+renderActiveFolderPath();
+loadGallery();
 
 // ---- query generation: expand queries with the LLM and write the result back
 // into the queries textarea *before* any download happens, so the user always
@@ -342,7 +496,7 @@ function buildRequest() {
   return {
     queries,
     n_per_query: Number($("n_per_query").value),
-    output_folder: $("output_folder").value.trim(),
+    output_folder: activeFolder,
     query_subfolders: $("query_subfolders").checked,
     concurrency: Number($("concurrency").value),
     filters: {
@@ -400,7 +554,8 @@ function buildWD14Config() {
 }
 
 // ---- job run + websocket progress (shared by the download job and the
-// standalone "caption a folder" action -- only one can run at a time) ----
+// standalone "caption a folder"/"remove duplicates" actions -- only one can
+// run at a time) ----
 let ws = null;
 let currentJobId = null;
 let currentJobKind = "download"; // "download" | "caption" | "dedup"
@@ -409,6 +564,7 @@ function setActionButtonsDisabled(disabled) {
   $("start-btn").disabled = disabled;
   $("capfolder-btn").disabled = disabled;
   $("dedup-btn").disabled = disabled;
+  $("open-folder-btn").disabled = disabled;
   $("cancel-btn").disabled = !disabled;
 }
 
@@ -417,19 +573,16 @@ function applyJobKindLabels(kind) {
     $("stat-downloaded-label").textContent = "Processed";
     $("stat-duplicates-row").hidden = true;
     $("stat-filtered-row").hidden = true;
-    $("thumbs-title").textContent = "Captioned images";
   } else if (kind === "dedup") {
     $("stat-downloaded-label").textContent = "Duplicate groups";
     $("stat-duplicates-label").textContent = "Removed";
     $("stat-duplicates-row").hidden = false;
     $("stat-filtered-row").hidden = true;
-    $("thumbs-title").textContent = "Kept files";
   } else {
     $("stat-downloaded-label").textContent = "Downloaded";
     $("stat-duplicates-label").textContent = "Duplicates";
     $("stat-duplicates-row").hidden = false;
     $("stat-filtered-row").hidden = false;
-    $("thumbs-title").textContent = "Downloaded images";
   }
 }
 
@@ -472,34 +625,6 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-// index (as assigned by the backend, matching /api/jobs/{id}/image/{index}) -> caption <div>
-const thumbCaptionEls = {};
-
-function addThumbnail(index, query) {
-  $("thumbs-card").hidden = false;
-  const grid = $("thumb-grid");
-  const card = document.createElement("div");
-  card.className = "thumb";
-
-  const img = document.createElement("img");
-  img.src = `/api/jobs/${currentJobId}/image/${index}`;
-  img.loading = "lazy";
-  img.alt = query || "";
-  card.appendChild(img);
-
-  const queryEl = document.createElement("div");
-  queryEl.className = "query";
-  queryEl.textContent = query || "";
-  card.appendChild(queryEl);
-
-  const capEl = document.createElement("div");
-  capEl.className = "cap";
-  card.appendChild(capEl);
-
-  grid.appendChild(card);
-  thumbCaptionEls[index] = capEl;
-}
-
 function handleEvent(ev) {
   switch (ev.type) {
     case "status":
@@ -508,6 +633,8 @@ function handleEvent(ev) {
       if (["done", "error", "cancelled"].includes(ev.data.status)) {
         logLine(`Finished. Status: ${ev.data.status}`, "ok");
         setActionButtonsDisabled(false);
+        clearTimeout(galleryReloadTimer);
+        loadGallery();
       }
       break;
     case "expanded":
@@ -517,25 +644,25 @@ function handleEvent(ev) {
     case "downloaded":
       logLine(`OK  [${ev.data.query}] ${ev.data.path}`, "ok");
       updateStats(bumpStats({ downloaded: 1 }));
-      if (ev.data.index !== undefined) addThumbnail(ev.data.index, ev.data.query);
+      scheduleGalleryReload();
       break;
     case "captioned":
       logLine(`CAP ${ev.data.path}: ${ev.data.caption}`, "info");
       updateStats(bumpStats({ captioned: 1 }));
-      if (ev.data.index !== undefined && thumbCaptionEls[ev.data.index]) {
-        thumbCaptionEls[ev.data.index].textContent = ev.data.caption;
-      }
+      scheduleGalleryReload();
       break;
     case "skip": {
       // "filtered" = deliberately excluded by our own format/size filters
-      // (working as configured); "duplicate" = same content seen before;
-      // anything else is a genuine error (network failure, bad data, ...).
+      // (working as configured); "duplicate" = same content seen before/
+      // removed by the dedup job; anything else is a genuine error (network
+      // failure, bad data, ...).
       const tag = ev.data.duplicate ? "DUP" : ev.data.filtered ? "FLT" : "ERR";
       const key = ev.data.duplicate ? "duplicates" : ev.data.filtered ? "filtered" : "errors";
       // Duplicates and filtered-out results are expected/working-as-intended
       // outcomes, not failures -- only a real error gets the alarming red.
       logLine(`${tag} [${ev.data.query}] ${ev.data.url} - ${ev.data.error}`, ev.data.duplicate || ev.data.filtered ? "info" : "err");
       updateStats(bumpStats({ [key]: 1 }));
+      if (ev.data.duplicate) scheduleGalleryReload();
       break;
     }
     case "warning":
@@ -562,10 +689,7 @@ async function startJob(apiPath, body, kind) {
   stats.downloaded = stats.errors = stats.duplicates = stats.captioned = stats.filtered = 0;
   updateStats(stats);
   $("log").innerHTML = "";
-  $("thumb-grid").innerHTML = "";
-  $("thumbs-card").hidden = true;
-  for (const k of Object.keys(thumbCaptionEls)) delete thumbCaptionEls[k];
-  $("progress-card").hidden = false;
+  $("statusbar").classList.add("expanded");
   setStatusBadge("running");
 
   let resp;
@@ -604,8 +728,8 @@ document.getElementById("job-form").addEventListener("submit", async (e) => {
     alert("Add at least one query");
     return;
   }
-  if (!$("output_folder").value.trim()) {
-    alert("Please set an output folder");
+  if (!activeFolder) {
+    alert("Please open an active folder first (top of the left panel)");
     return;
   }
 
@@ -626,10 +750,10 @@ document.getElementById("job-form").addEventListener("submit", async (e) => {
   await startJob("/api/jobs", buildRequest(), "download");
 });
 
-// ---- standalone folder captioning ----
+// ---- standalone folder captioning (always targets the active folder) ----
 function buildCaptionFolderRequest() {
   return {
-    folder: $("capfolder_path").value.trim(),
+    folder: activeFolder,
     method: $("cap_method").value,
     recursive: $("capfolder_recursive").checked,
     overwrite: $("capfolder_overwrite").checked,
@@ -657,8 +781,8 @@ $("capfolder-btn").addEventListener("click", async () => {
   hint.textContent = "";
   hint.className = "hint";
 
-  if (!$("capfolder_path").value.trim()) {
-    alert("Please set a folder to caption");
+  if (!activeFolder) {
+    alert("Please open an active folder first (top of the left panel)");
     return;
   }
   if ($("trigger_enabled").checked && !$("trigger_word").value.trim()) {
@@ -669,10 +793,10 @@ $("capfolder-btn").addEventListener("click", async () => {
   await startJob("/api/caption-folder", buildCaptionFolderRequest(), "caption");
 });
 
-// ---- standalone duplicate removal ----
+// ---- standalone duplicate removal (always targets the active folder) ----
 function buildDedupFolderRequest() {
   return {
-    folder: $("dedup_path").value.trim(),
+    folder: activeFolder,
     recursive: $("dedup_recursive").checked,
   };
 }
@@ -683,9 +807,8 @@ $("dedup-btn").addEventListener("click", async () => {
   hint.textContent = "";
   hint.className = "hint";
 
-  const folder = $("dedup_path").value.trim();
-  if (!folder) {
-    alert("Please set a folder to deduplicate");
+  if (!activeFolder) {
+    alert("Please open an active folder first (top of the left panel)");
     return;
   }
   // A bulk-delete action deserves an explicit confirmation even though it's
@@ -693,7 +816,7 @@ $("dedup-btn").addEventListener("click", async () => {
   // isn't known until the scan runs, so this confirms the action itself,
   // not a specific number.
   const proceed = confirm(
-    `This will scan "${folder}" for images with identical content and move every copy but one to the Recycle Bin ` +
+    `This will scan "${activeFolder}" for images with identical content and move every copy but one to the Recycle Bin ` +
     "(along with any orphaned .txt caption). This can be undone from the Recycle Bin, but not from here. Continue?"
   );
   if (!proceed) return;
@@ -701,7 +824,8 @@ $("dedup-btn").addEventListener("click", async () => {
   await startJob("/api/dedup-folder", buildDedupFolderRequest(), "dedup");
 });
 
-document.getElementById("cancel-btn").addEventListener("click", async () => {
+$("cancel-btn").addEventListener("click", async (e) => {
+  e.stopPropagation();
   if (!currentJobId) return;
   await fetch(`/api/jobs/${currentJobId}/cancel`, { method: "POST" });
   logLine("Cancellation requested...", "info");

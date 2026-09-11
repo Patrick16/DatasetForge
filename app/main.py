@@ -12,6 +12,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from . import local_models, model_control, model_registry
+from .browse import list_folder_images
+from .download import IMAGE_EXTENSIONS
 from .jobs import job_manager
 from .llm_client import LLMClient
 from .models import CaptionFolderRequest, DedupFolderRequest, JobCreateRequest, LLMConfig
@@ -20,6 +22,21 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Same as StaticFiles, but tells the browser to always revalidate instead
+    of trusting a heuristic freshness lifetime for files served with no
+    explicit Cache-Control header (the default). This app's static files
+    (index.html/app.js/style.css) change often during development -- a
+    silently stale cached copy showing an old UI after a restart is a worse
+    failure mode than one extra conditional (If-None-Match) request per load.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 @asynccontextmanager
@@ -40,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="DatasetForge", lifespan=lifespan)
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
@@ -191,6 +208,32 @@ async def dedup_folder(req: DedupFolderRequest):
     state = job_manager.create_dedup_job(req)
     asyncio.create_task(job_manager.run_dedup_job(state))
     return {"job_id": state.id}
+
+
+@app.get("/api/browse-folder")
+async def browse_folder(folder: str, recursive: bool = True):
+    """List the images (+ any sidecar caption) already sitting in a folder --
+    what the "active folder" gallery in the UI renders. Independent of any
+    job: this reflects whatever is on disk right now, download job or not.
+    """
+    root = Path(folder)
+    if not root.is_dir():
+        raise HTTPException(400, f"Folder not found: {folder}")
+    files = await asyncio.to_thread(list_folder_images, root, recursive)
+    captioned = sum(1 for f in files if f["caption"])
+    return {"folder": folder, "files": files, "total": len(files), "captioned": captioned}
+
+
+@app.get("/api/local-image")
+async def local_image(path: str):
+    """Serve one image file from disk by its absolute path, for the active-folder
+    gallery's thumbnails. Scoped to files this app already treats as images
+    elsewhere (IMAGE_EXTENSIONS) -- not an arbitrary-file server.
+    """
+    p = Path(path)
+    if p.suffix.lower() not in IMAGE_EXTENSIONS or not p.is_file():
+        raise HTTPException(404, "image not found")
+    return FileResponse(str(p))
 
 
 @app.get("/api/jobs/{job_id}")

@@ -264,6 +264,62 @@ class TestDedupFolderValidation:
         assert resp.status_code == 200
 
 
+class TestBrowseFolder:
+    def test_rejects_a_folder_that_does_not_exist(self, client, tmp_path):
+        resp = client.get("/api/browse-folder", params={"folder": str(tmp_path / "nope")})
+        assert resp.status_code == 400
+
+    def test_lists_images_and_caption_counts(self, client, tmp_path):
+        (tmp_path / "a.jpg").write_bytes(b"fake")
+        (tmp_path / "a.txt").write_text("a caption", encoding="utf-8")
+        (tmp_path / "b.jpg").write_bytes(b"fake")
+
+        resp = client.get("/api/browse-folder", params={"folder": str(tmp_path)})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 2
+        assert body["captioned"] == 1
+        names = {f["name"] for f in body["files"]}
+        assert names == {"a.jpg", "b.jpg"}
+
+    def test_recursive_is_on_by_default(self, client, tmp_path):
+        sub = tmp_path / "query_1"
+        sub.mkdir()
+        (sub / "a.jpg").write_bytes(b"fake")
+
+        resp = client.get("/api/browse-folder", params={"folder": str(tmp_path)})
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+
+    def test_recursive_false_ignores_subfolders(self, client, tmp_path):
+        sub = tmp_path / "query_1"
+        sub.mkdir()
+        (sub / "a.jpg").write_bytes(b"fake")
+
+        resp = client.get("/api/browse-folder", params={"folder": str(tmp_path), "recursive": False})
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 0
+
+
+class TestLocalImage:
+    def test_serves_an_existing_image_file(self, client, tmp_path):
+        img = tmp_path / "a.jpg"
+        img.write_bytes(b"fake-jpeg-bytes")
+        resp = client.get("/api/local-image", params={"path": str(img)})
+        assert resp.status_code == 200
+        assert resp.content == b"fake-jpeg-bytes"
+
+    def test_missing_file_is_404(self, client, tmp_path):
+        resp = client.get("/api/local-image", params={"path": str(tmp_path / "nope.jpg")})
+        assert resp.status_code == 404
+
+    def test_non_image_extension_is_404(self, client, tmp_path):
+        txt = tmp_path / "a.txt"
+        txt.write_text("hi", encoding="utf-8")
+        resp = client.get("/api/local-image", params={"path": str(txt)})
+        assert resp.status_code == 404
+
+
 class TestJobStatusAndImages:
     def test_get_unknown_job_is_404(self, client):
         assert client.get("/api/jobs/doesnotexist").status_code == 404
