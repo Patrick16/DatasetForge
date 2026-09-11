@@ -132,6 +132,15 @@
         <h2 id="gallery-title">No folder open</h2>
         <span class="muted" id="gallery-meta"></span>
       </div>
+      <div class="selection-bar" id="selection-bar" hidden>
+        <span id="selection-count">0 selected</span>
+        <div class="selection-actions">
+          <button type="button" id="select-all-btn" class="btn-chip">Select all</button>
+          <button type="button" id="caption-selected-btn" class="btn-chip">&#128221; Caption selected</button>
+          <button type="button" id="delete-selected-btn" class="btn-chip btn-chip-danger">&#128465; Delete selected</button>
+          <button type="button" id="clear-selection-btn" class="btn-chip" aria-label="Clear selection">&#10005; Clear</button>
+        </div>
+      </div>
       <div class="thumb-grid" id="thumb-grid"></div>
       <p class="gallery-empty" id="gallery-empty">Open a folder on the left to see its images here.</p>
     </main>
@@ -372,7 +381,7 @@
     <div class="statusbar-head" id="statusbar-head">
       <span class="status-badge" id="job-status">idle</span>
       <div class="status-stats" id="stats">
-        <span><span id="stat-downloaded-label">Downloaded</span>: <b id="stat-downloaded">0</b></span>
+        <span id="stat-downloaded-row"><span id="stat-downloaded-label">Downloaded</span>: <b id="stat-downloaded">0</b></span>
         <span id="stat-filtered-row" title="Excluded by your format/size filters -- not an error, working as configured">Filtered: <b id="stat-filtered">0</b></span>
         <span>Errors: <b id="stat-errors">0</b></span>
         <span id="stat-duplicates-row"><span id="stat-duplicates-label">Duplicates</span>: <b id="stat-duplicates">0</b></span>
@@ -383,6 +392,24 @@
     </div>
     <div class="log statusbar-log" id="log"></div>
   </footer>
+
+  <!-- ============ IMAGE MODAL ============ -->
+  <div class="modal-backdrop" id="image-modal" hidden>
+    <div class="modal-dialog">
+      <button type="button" class="modal-close" id="modal-close-btn" aria-label="Close">&#10005;</button>
+      <div class="modal-image-pane">
+        <button type="button" class="modal-nav modal-prev" id="modal-prev-btn" aria-label="Previous image">&#8249;</button>
+        <img id="modal-image" alt="" />
+        <button type="button" class="modal-nav modal-next" id="modal-next-btn" aria-label="Next image">&#8250;</button>
+      </div>
+      <div class="modal-info">
+        <h3 id="modal-filename"></h3>
+        <dl class="modal-meta" id="modal-meta"></dl>
+        <p class="eyebrow">Caption</p>
+        <p id="modal-caption" class="modal-caption"></p>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

@@ -131,6 +131,28 @@ class CaptionFolderRequest(BaseModel):
     trigger: TriggerWordConfig = Field(default_factory=TriggerWordConfig)
 
 
+class CaptionFilesRequest(BaseModel):
+    """Caption a specific, user-picked set of files -- a multi-select in the
+    gallery -- independent of any download job or whole-folder scan. Always
+    (re)writes the caption for exactly the files given, regardless of
+    whether one already existed: picking files and hitting "Caption
+    selected" is itself the overwrite decision."""
+
+    paths: list[str]
+    method: Literal["vision_llm", "wd14"] = "vision_llm"
+    llm: LLMConfig = Field(default_factory=lambda: LLMConfig(model="moondream"))
+    wd14: WD14Config = Field(default_factory=WD14Config)
+    trigger: TriggerWordConfig = Field(default_factory=TriggerWordConfig)
+
+
+class DeleteFilesRequest(BaseModel):
+    """Delete a specific, user-picked set of files -- a multi-select in the
+    gallery. Removed files (and their sidecar .txt caption, if any) go to
+    the OS Recycle Bin via send2trash, not a permanent delete."""
+
+    paths: list[str]
+
+
 class DedupFolderRequest(BaseModel):
     """Find images in a folder with byte-identical content (exact sha256
     match) and remove every copy but one -- e.g. after downloading the same

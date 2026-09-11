@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PIL import Image, UnidentifiedImageError
+
 from .download import IMAGE_EXTENSIONS
 
 
 def list_folder_images(root: Path, recursive: bool = True) -> list[dict]:
     """List every image already sitting in a folder, paired with its caption
-    (the sibling `<name>.txt`, if one exists) -- the data the "active folder"
-    gallery in the UI is built from.
+    (the sibling `<name>.txt`, if one exists) and light metadata (file size,
+    pixel dimensions) -- the data the "active folder" gallery and its
+    per-image modal are built from.
 
     Recursive by default: unlike the caption/dedup actions (where "include
     subfolders" is a deliberate, user-controlled choice about what gets
@@ -28,6 +31,25 @@ def list_folder_images(root: Path, recursive: bool = True) -> list[dict]:
                 caption = txt_path.read_text(encoding="utf-8").strip() or None
             except OSError:
                 caption = None
-        items.append({"name": p.name, "path": str(p), "caption": caption})
+
+        width = height = None
+        try:
+            # A lazy open -- this only parses the header, not the full pixel
+            # data, so it stays cheap even over a folder with a few thousand
+            # images.
+            with Image.open(p) as img:
+                width, height = img.size
+        except (OSError, UnidentifiedImageError):
+            pass  # corrupt/unreadable file -- still list it, just without dimensions
+
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = None
+
+        items.append({
+            "name": p.name, "path": str(p), "caption": caption,
+            "size": size, "width": width, "height": height,
+        })
     items.sort(key=lambda d: d["name"])
     return items

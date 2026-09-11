@@ -16,7 +16,14 @@ from .browse import list_folder_images
 from .download import IMAGE_EXTENSIONS
 from .jobs import job_manager
 from .llm_client import LLMClient
-from .models import CaptionFolderRequest, DedupFolderRequest, JobCreateRequest, LLMConfig
+from .models import (
+    CaptionFilesRequest,
+    CaptionFolderRequest,
+    DedupFolderRequest,
+    DeleteFilesRequest,
+    JobCreateRequest,
+    LLMConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +241,27 @@ async def local_image(path: str):
     if p.suffix.lower() not in IMAGE_EXTENSIONS or not p.is_file():
         raise HTTPException(404, "image not found")
     return FileResponse(str(p))
+
+
+@app.post("/api/caption-files")
+async def caption_files(req: CaptionFilesRequest):
+    """Caption a specific, user-picked set of files (a gallery multi-select)."""
+    if not req.paths:
+        raise HTTPException(400, "No files selected")
+    state = job_manager.create_caption_files_job(req)
+    asyncio.create_task(job_manager.run_caption_files_job(state))
+    return {"job_id": state.id}
+
+
+@app.post("/api/delete-files")
+async def delete_files(req: DeleteFilesRequest):
+    """Delete a specific, user-picked set of files (a gallery multi-select)
+    -- moved to the Recycle Bin, not a permanent delete."""
+    if not req.paths:
+        raise HTTPException(400, "No files selected")
+    state = job_manager.create_delete_files_job(req)
+    asyncio.create_task(job_manager.run_delete_files_job(state))
+    return {"job_id": state.id}
 
 
 @app.get("/api/jobs/{job_id}")

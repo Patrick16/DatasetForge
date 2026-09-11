@@ -264,6 +264,36 @@ class TestDedupFolderValidation:
         assert resp.status_code == 200
 
 
+class TestCaptionFilesValidation:
+    def test_rejects_an_empty_selection(self, client):
+        resp = client.post("/api/caption-files", json={"paths": []})
+        assert resp.status_code == 400
+
+    def test_accepts_a_valid_request(self, client, monkeypatch):
+        async def fake_run(state):
+            pass
+
+        monkeypatch.setattr(job_manager, "run_caption_files_job", fake_run)
+        resp = client.post("/api/caption-files", json={"paths": ["C:/data/a.jpg"]})
+        assert resp.status_code == 200
+        assert "job_id" in resp.json()
+
+
+class TestDeleteFilesValidation:
+    def test_rejects_an_empty_selection(self, client):
+        resp = client.post("/api/delete-files", json={"paths": []})
+        assert resp.status_code == 400
+
+    def test_accepts_a_valid_request(self, client, monkeypatch):
+        async def fake_run(state):
+            pass
+
+        monkeypatch.setattr(job_manager, "run_delete_files_job", fake_run)
+        resp = client.post("/api/delete-files", json={"paths": ["C:/data/a.jpg"]})
+        assert resp.status_code == 200
+        assert "job_id" in resp.json()
+
+
 class TestBrowseFolder:
     def test_rejects_a_folder_that_does_not_exist(self, client, tmp_path):
         resp = client.get("/api/browse-folder", params={"folder": str(tmp_path / "nope")})

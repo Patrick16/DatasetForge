@@ -317,6 +317,12 @@ function folderBaseName(folder) {
   return parts[parts.length - 1] || folder;
 }
 
+// The gallery's last-loaded file list (path/name/caption/size/width/height),
+// used both to render the grid and to look things up for the modal without
+// a round-trip -- and which paths are currently multi-selected.
+let galleryFiles = [];
+const selectedPaths = new Set();
+
 // Loads (or reloads) the gallery from whatever's on disk in `activeFolder`
 // right now -- called on open, after each job's terminal status, and
 // (debounced) while a job is progressing, so newly written files/captions
@@ -355,22 +361,36 @@ async function loadGallery() {
       ? `<b>${data.total}</b> files · <b>${data.captioned}</b> captioned`
       : "Empty folder so far";
 
+    // Selection survives a reload (a job progressing, a manual reopen) as
+    // long as the same paths are still there -- drop anything that vanished
+    // (e.g. just got deleted) instead of leaving a phantom "N selected".
+    galleryFiles = data.files;
+    const stillPresent = new Set(galleryFiles.map((f) => f.path));
+    for (const p of Array.from(selectedPaths)) {
+      if (!stillPresent.has(p)) selectedPaths.delete(p);
+    }
+
     if (!data.files.length) {
       grid.innerHTML = "";
       empty.hidden = false;
       empty.textContent = "No images in this folder yet.";
+      renderSelectionBar();
       return;
     }
     empty.hidden = true;
     grid.innerHTML = data.files.map((f) => `
-      <figure class="thumb-card">
-        <div class="thumb-img"><img src="/api/local-image?path=${encodeURIComponent(f.path)}" loading="lazy" alt="${escapeHtml(f.name)}" /></div>
+      <figure class="thumb-card ${selectedPaths.has(f.path) ? "selected" : ""}" data-path="${escapeHtml(f.path)}">
+        <div class="thumb-img">
+          <input type="checkbox" class="thumb-select" title="Select" ${selectedPaths.has(f.path) ? "checked" : ""} />
+          <img src="/api/local-image?path=${encodeURIComponent(f.path)}" loading="lazy" alt="${escapeHtml(f.name)}" />
+        </div>
         <figcaption class="thumb-body">
           <div class="thumb-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
           <div class="thumb-caption ${f.caption ? "" : "empty"}">${f.caption ? escapeHtml(f.caption) : "No caption yet"}</div>
         </figcaption>
       </figure>
     `).join("");
+    renderSelectionBar();
   } catch (err) {
     empty.hidden = false;
     empty.textContent = "Request failed: " + err;
@@ -415,6 +435,147 @@ $("open-folder-btn").addEventListener("click", async () => {
 
 renderActiveFolderPath();
 loadGallery();
+
+// ---- gallery multi-select: a checkbox in the corner of each card, separate
+// from clicking the card itself (which opens the full-size modal) -- picked
+// files feed "Caption selected" / "Delete selected" in the selection bar. ----
+function renderSelectionBar() {
+  const bar = $("selection-bar");
+  const n = selectedPaths.size;
+  bar.hidden = n === 0;
+  if (n > 0) $("selection-count").textContent = `${n} selected`;
+}
+
+function setCardSelected(path, selected) {
+  if (selected) selectedPaths.add(path);
+  else selectedPaths.delete(path);
+  const card = $("thumb-grid").querySelector(`.thumb-card[data-path="${cssEscape(path)}"]`);
+  if (card) {
+    card.classList.toggle("selected", selected);
+    const cb = card.querySelector(".thumb-select");
+    if (cb) cb.checked = selected;
+  }
+  renderSelectionBar();
+}
+
+function clearSelection() {
+  for (const path of Array.from(selectedPaths)) setCardSelected(path, false);
+}
+
+// CSS.escape isn't polyfilled everywhere this might run, but every path here
+// came from our own backend (not user-typed), so a minimal escape is enough
+// to keep it a valid attribute-value selector.
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, "\\$&");
+}
+
+$("thumb-grid").addEventListener("click", (e) => {
+  const card = e.target.closest(".thumb-card");
+  if (!card) return;
+  const path = card.dataset.path;
+
+  if (e.target.classList.contains("thumb-select")) {
+    setCardSelected(path, e.target.checked);
+    return;
+  }
+  const index = galleryFiles.findIndex((f) => f.path === path);
+  if (index !== -1) openModal(index);
+});
+
+$("select-all-btn").addEventListener("click", () => {
+  for (const f of galleryFiles) setCardSelected(f.path, true);
+});
+$("clear-selection-btn").addEventListener("click", () => clearSelection());
+
+$("caption-selected-btn").addEventListener("click", async () => {
+  const paths = Array.from(selectedPaths);
+  if (!paths.length) return;
+  await startJob("/api/caption-files", buildCaptionFilesRequest(paths), "caption_selected");
+});
+
+$("delete-selected-btn").addEventListener("click", async () => {
+  const paths = Array.from(selectedPaths);
+  if (!paths.length) return;
+  const proceed = confirm(
+    `Move ${paths.length} selected image${paths.length === 1 ? "" : "s"} (and any caption) to the Recycle Bin? ` +
+    "This can be undone from the Recycle Bin, but not from here."
+  );
+  if (!proceed) return;
+  await startJob("/api/delete-files", { paths }, "delete_selected");
+});
+
+// ---- image modal: click a card to see it full-size, with its metadata and
+// caption -- and step through the rest of the gallery without closing it. ----
+let modalIndex = -1;
+
+function formatBytes(n) {
+  if (n == null) return "unknown";
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+function openModal(index) {
+  modalIndex = index;
+  renderModal();
+  $("image-modal").hidden = false;
+}
+
+function closeModal() {
+  $("image-modal").hidden = true;
+  modalIndex = -1;
+}
+
+function renderModal() {
+  const f = galleryFiles[modalIndex];
+  if (!f) return;
+
+  $("modal-image").src = `/api/local-image?path=${encodeURIComponent(f.path)}`;
+  $("modal-image").alt = f.name;
+  $("modal-filename").textContent = f.name;
+
+  const dims = f.width && f.height ? `${f.width} × ${f.height}px` : "unknown";
+  $("modal-meta").innerHTML = `
+    <div><dt>Dimensions</dt><dd>${dims}</dd></div>
+    <div><dt>File size</dt><dd>${formatBytes(f.size)}</dd></div>
+    <div><dt>Path</dt><dd>${escapeHtml(f.path)}</dd></div>
+  `;
+
+  const capEl = $("modal-caption");
+  capEl.textContent = f.caption || "No caption yet";
+  capEl.classList.toggle("empty", !f.caption);
+
+  $("modal-prev-btn").disabled = modalIndex <= 0;
+  $("modal-next-btn").disabled = modalIndex >= galleryFiles.length - 1;
+}
+
+$("modal-close-btn").addEventListener("click", closeModal);
+$("image-modal").addEventListener("click", (e) => {
+  if (e.target.id === "image-modal") closeModal();
+});
+$("modal-prev-btn").addEventListener("click", () => {
+  if (modalIndex > 0) {
+    modalIndex--;
+    renderModal();
+  }
+});
+$("modal-next-btn").addEventListener("click", () => {
+  if (modalIndex < galleryFiles.length - 1) {
+    modalIndex++;
+    renderModal();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if ($("image-modal").hidden) return;
+  if (e.key === "Escape") closeModal();
+  else if (e.key === "ArrowLeft") $("modal-prev-btn").click();
+  else if (e.key === "ArrowRight") $("modal-next-btn").click();
+});
 
 // ---- query generation: expand queries with the LLM and write the result back
 // into the queries textarea *before* any download happens, so the user always
@@ -558,23 +719,33 @@ function buildWD14Config() {
 // run at a time) ----
 let ws = null;
 let currentJobId = null;
-let currentJobKind = "download"; // "download" | "caption" | "dedup"
+let currentJobKind = "download"; // "download" | "caption" | "dedup" | "caption_selected" | "delete_selected"
 
 function setActionButtonsDisabled(disabled) {
   $("start-btn").disabled = disabled;
   $("capfolder-btn").disabled = disabled;
   $("dedup-btn").disabled = disabled;
   $("open-folder-btn").disabled = disabled;
+  $("caption-selected-btn").disabled = disabled;
+  $("delete-selected-btn").disabled = disabled;
   $("cancel-btn").disabled = !disabled;
 }
 
 function applyJobKindLabels(kind) {
-  if (kind === "caption") {
+  $("stat-downloaded-row").hidden = false;
+  if (kind === "caption" || kind === "caption_selected") {
     $("stat-downloaded-label").textContent = "Processed";
     $("stat-duplicates-row").hidden = true;
     $("stat-filtered-row").hidden = true;
   } else if (kind === "dedup") {
     $("stat-downloaded-label").textContent = "Duplicate groups";
+    $("stat-duplicates-label").textContent = "Removed";
+    $("stat-duplicates-row").hidden = false;
+    $("stat-filtered-row").hidden = true;
+  } else if (kind === "delete_selected") {
+    // Nothing here maps to a "Downloaded"-shaped count -- every selected
+    // file is simply removed or not, so that row would only ever read 0.
+    $("stat-downloaded-row").hidden = true;
     $("stat-duplicates-label").textContent = "Removed";
     $("stat-duplicates-row").hidden = false;
     $("stat-filtered-row").hidden = true;
@@ -635,6 +806,11 @@ function handleEvent(ev) {
         setActionButtonsDisabled(false);
         clearTimeout(galleryReloadTimer);
         loadGallery();
+        // A successful selection action consumed the selection it acted on
+        // -- an error or a cancel leaves it as-is so the same pick can be retried.
+        if (ev.data.status === "done" && (currentJobKind === "caption_selected" || currentJobKind === "delete_selected")) {
+          clearSelection();
+        }
       }
       break;
     case "expanded":
@@ -773,6 +949,18 @@ function buildCaptionFolderRequest() {
       custom_instruction: $("trigger_custom").value.trim() || null,
     },
   };
+}
+
+// ---- gallery multi-select captioning: same Method/Settings as above, but
+// against exactly the picked files instead of a folder scan -- always
+// (re)writes their caption, since picking them *is* the overwrite decision. ----
+function buildCaptionFilesRequest(paths) {
+  const req = buildCaptionFolderRequest();
+  delete req.folder;
+  delete req.recursive;
+  delete req.overwrite;
+  req.paths = paths;
+  return req;
 }
 
 $("capfolder-btn").addEventListener("click", async () => {

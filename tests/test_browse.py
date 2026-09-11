@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+import io
+
+from PIL import Image
+
 from app.browse import list_folder_images
+
+
+def _write_png(path, size=(4, 4), color=(255, 0, 0)):
+    img = Image.new("RGB", size, color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    path.write_bytes(buf.getvalue())
 
 
 class TestListFolderImages:
@@ -8,11 +19,25 @@ class TestListFolderImages:
         assert list_folder_images(tmp_path) == []
 
     def test_lists_images_without_captions(self, tmp_path):
-        (tmp_path / "a.jpg").write_bytes(b"fake")
-        (tmp_path / "b.png").write_bytes(b"fake")
+        _write_png(tmp_path / "a.jpg")
+        _write_png(tmp_path / "b.png")
         items = list_folder_images(tmp_path)
         assert [i["name"] for i in items] == ["a.jpg", "b.png"]
         assert all(i["caption"] is None for i in items)
+
+    def test_reports_pixel_dimensions_and_file_size(self, tmp_path):
+        _write_png(tmp_path / "a.jpg", size=(12, 8))
+        items = list_folder_images(tmp_path)
+        assert items[0]["width"] == 12
+        assert items[0]["height"] == 8
+        assert items[0]["size"] == (tmp_path / "a.jpg").stat().st_size
+
+    def test_unreadable_image_still_lists_with_no_dimensions(self, tmp_path):
+        (tmp_path / "a.jpg").write_bytes(b"not actually an image")
+        items = list_folder_images(tmp_path)
+        assert items[0]["width"] is None
+        assert items[0]["height"] is None
+        assert items[0]["size"] is not None
 
     def test_pairs_a_caption_from_the_sidecar_txt_file(self, tmp_path):
         (tmp_path / "a.jpg").write_bytes(b"fake")

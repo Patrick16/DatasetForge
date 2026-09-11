@@ -14,7 +14,13 @@ from .captioning import build_captioner
 from .dedup import find_duplicate_groups
 from .download import IMAGE_EXTENSIONS, download_image, sanitize_folder_name
 from .llm_client import LLMClient
-from .models import CaptionFolderRequest, DedupFolderRequest, JobCreateRequest
+from .models import (
+    CaptionFilesRequest,
+    CaptionFolderRequest,
+    DedupFolderRequest,
+    DeleteFilesRequest,
+    JobCreateRequest,
+)
 from .search import build_search_provider
 
 logger = logging.getLogger(__name__)
@@ -36,8 +42,8 @@ class JobEvent:
 @dataclass
 class JobState:
     id: str
-    request: JobCreateRequest | CaptionFolderRequest | DedupFolderRequest
-    kind: str = "download"  # "download" | "caption_folder" | "dedup"
+    request: JobCreateRequest | CaptionFolderRequest | DedupFolderRequest | CaptionFilesRequest | DeleteFilesRequest
+    kind: str = "download"  # "download" | "caption_folder" | "dedup" | "caption_files" | "delete_files"
     status: str = "pending"  # pending, running, done, error, cancelled
     events: list[JobEvent] = field(default_factory=list)
     subscribers: list[asyncio.Queue] = field(default_factory=list)
@@ -72,6 +78,18 @@ class JobManager:
     def create_dedup_job(self, request: DedupFolderRequest) -> JobState:
         job_id = uuid.uuid4().hex[:12]
         state = JobState(id=job_id, kind="dedup", request=request)
+        self.jobs[job_id] = state
+        return state
+
+    def create_caption_files_job(self, request: CaptionFilesRequest) -> JobState:
+        job_id = uuid.uuid4().hex[:12]
+        state = JobState(id=job_id, kind="caption_files", request=request)
+        self.jobs[job_id] = state
+        return state
+
+    def create_delete_files_job(self, request: DeleteFilesRequest) -> JobState:
+        job_id = uuid.uuid4().hex[:12]
+        state = JobState(id=job_id, kind="delete_files", request=request)
         self.jobs[job_id] = state
         return state
 
@@ -359,6 +377,113 @@ class JobManager:
             state.status = "cancelled" if state.cancel_requested else "done"
         except Exception as e:
             logger.exception("Dedup job %s failed", state.id)
+            state.status = "error"
+            await self.emit(state, "warning", {"message": f"Job failed: {e}"})
+        finally:
+            await self.emit(state, "status", {"status": state.status, "stats": state.stats})
+
+    async def run_caption_files_job(self, state: JobState) -> None:
+        """Caption a specific, user-picked set of files (a gallery
+        multi-select) -- independent of any download job or whole-folder
+        scan. Always (re)writes the caption; there's no separate overwrite
+        flag here, since picking exactly these files *is* that decision."""
+        req: CaptionFilesRequest = state.request
+        state.status = "running"
+        await self.emit(state, "status", {"status": "running"})
+
+        captioner = build_captioner(req.method, req.llm, req.wd14, trigger=req.trigger)
+        try:
+            paths = [Path(p) for p in req.paths]
+            if not paths:
+                await self.emit(state, "warning", {"message": "No files selected."})
+
+            for path in paths:
+                if state.cancel_requested:
+                    break
+                if not path.is_file():
+                    state.stats["errors"] += 1
+                    await self.emit(state, "warning", {"message": f"File no longer exists: {path.name}"})
+                    continue
+
+                try:
+                    content = path.read_bytes()
+                    mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+                    caption = await captioner.caption(content, mime)
+                except Exception as e:
+                    state.stats["errors"] += 1
+                    await self.emit(state, "warning", {"message": f"Captioning failed for {path.name}: {e}"})
+                    continue
+
+                txt_path = path.with_suffix(".txt")
+                try:
+                    txt_path.write_text(caption, encoding="utf-8")
+                except Exception as e:
+                    state.stats["errors"] += 1
+                    await self.emit(state, "warning", {"message": f"Could not write {txt_path.name}: {e}"})
+                    continue
+
+                file_index = len(state.downloaded_files)
+                state.downloaded_files.append(path)
+                state.stats["downloaded"] += 1
+                state.stats["captioned"] += 1
+                await self.emit(
+                    state, "downloaded",
+                    {"query": path.name, "path": str(path), "url": "", "index": file_index},
+                )
+                await self.emit(
+                    state, "captioned",
+                    {"path": str(txt_path), "caption": caption, "index": file_index},
+                )
+
+            state.status = "cancelled" if state.cancel_requested else "done"
+        except Exception as e:
+            logger.exception("Caption-files job %s failed", state.id)
+            state.status = "error"
+            await self.emit(state, "warning", {"message": f"Job failed: {e}"})
+        finally:
+            await captioner.aclose()
+            await self.emit(state, "status", {"status": state.status, "stats": state.stats})
+
+    async def run_delete_files_job(self, state: JobState) -> None:
+        """Delete a specific, user-picked set of files (a gallery
+        multi-select) -- to the Recycle Bin via send2trash, not a permanent
+        delete. Independent of the hash-based dedup job."""
+        req: DeleteFilesRequest = state.request
+        state.status = "running"
+        await self.emit(state, "status", {"status": "running"})
+
+        try:
+            paths = [Path(p) for p in req.paths]
+            if not paths:
+                await self.emit(state, "warning", {"message": "No files selected."})
+
+            for path in paths:
+                if state.cancel_requested:
+                    break
+                try:
+                    if path.is_file():
+                        await asyncio.to_thread(send2trash, str(path))
+                    # An orphaned caption is worse than no caption -- take it
+                    # with the image, same as the dedup job does.
+                    txt_path = path.with_suffix(".txt")
+                    if txt_path.exists():
+                        await asyncio.to_thread(send2trash, str(txt_path))
+                    # Reuses the "duplicates" counter as a generic "removed"
+                    # count -- the UI relabels it for this job kind, same as
+                    # it already does for the dedup job.
+                    state.stats["duplicates"] += 1
+                    await self.emit(
+                        state, "skip",
+                        {"query": path.name, "url": str(path),
+                         "error": "moved to Recycle Bin", "duplicate": True, "filtered": False},
+                    )
+                except Exception as e:
+                    state.stats["errors"] += 1
+                    await self.emit(state, "warning", {"message": f"Could not remove {path.name}: {e}"})
+
+            state.status = "cancelled" if state.cancel_requested else "done"
+        except Exception as e:
+            logger.exception("Delete-files job %s failed", state.id)
             state.status = "error"
             await self.emit(state, "warning", {"message": f"Job failed: {e}"})
         finally:

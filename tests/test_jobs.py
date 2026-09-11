@@ -9,9 +9,11 @@ from app import jobs as jobs_module
 from app.download import DownloadResult
 from app.jobs import JobManager
 from app.models import (
+    CaptionFilesRequest,
     CaptionFolderRequest,
     CaptioningConfig,
     DedupFolderRequest,
+    DeleteFilesRequest,
     FilterConfig,
     JobCreateRequest,
     LLMConfig,
@@ -625,3 +627,143 @@ class TestRunDedupJob:
         state2 = manager.create_dedup_job(recursive)
         await manager.run_dedup_job(state2)
         assert state2.stats["duplicates"] == 1
+
+
+class TestRunCaptionFilesJob:
+    def _make_image(self, path: Path) -> None:
+        path.write_bytes(b"fake-image-bytes")
+
+    async def test_captions_exactly_the_given_files(self, manager, monkeypatch, tmp_path):
+        self._make_image(tmp_path / "a.jpg")
+        self._make_image(tmp_path / "b.jpg")
+        self._make_image(tmp_path / "c.jpg")  # not selected -- must stay untouched
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
+
+        req = CaptionFilesRequest(paths=[str(tmp_path / "a.jpg"), str(tmp_path / "b.jpg")], llm=LLMConfig())
+        state = manager.create_caption_files_job(req)
+        await manager.run_caption_files_job(state)
+
+        assert state.status == "done"
+        assert state.stats["captioned"] == 2
+        assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "a fake caption"
+        assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "a fake caption"
+        assert not (tmp_path / "c.txt").exists()
+
+    async def test_overwrites_an_existing_caption_unconditionally(self, manager, monkeypatch, tmp_path):
+        self._make_image(tmp_path / "a.jpg")
+        (tmp_path / "a.txt").write_text("stale caption", encoding="utf-8")
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
+
+        req = CaptionFilesRequest(paths=[str(tmp_path / "a.jpg")], llm=LLMConfig())
+        state = manager.create_caption_files_job(req)
+        await manager.run_caption_files_job(state)
+
+        assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "a fake caption"
+
+    async def test_missing_file_is_counted_as_an_error_and_does_not_stop_the_job(self, manager, monkeypatch, tmp_path):
+        self._make_image(tmp_path / "a.jpg")
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
+
+        req = CaptionFilesRequest(
+            paths=[str(tmp_path / "nope.jpg"), str(tmp_path / "a.jpg")], llm=LLMConfig(),
+        )
+        state = manager.create_caption_files_job(req)
+        await manager.run_caption_files_job(state)
+
+        assert state.status == "done"
+        assert state.stats["errors"] == 1
+        assert state.stats["captioned"] == 1
+
+    async def test_empty_selection_finishes_done_with_a_warning(self, manager, monkeypatch, tmp_path):
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
+        req = CaptionFilesRequest(paths=[], llm=LLMConfig())
+        state = manager.create_caption_files_job(req)
+        await manager.run_caption_files_job(state)
+
+        assert state.status == "done"
+        assert any(e.type == "warning" for e in state.events)
+
+    async def test_captioner_is_closed_even_when_every_file_is_missing(self, manager, monkeypatch, tmp_path):
+        monkeypatch.setattr(captioning_module, "LLMClient", FakeLLMClient)
+        req = CaptionFilesRequest(paths=[str(tmp_path / "nope.jpg")], llm=LLMConfig())
+        state = manager.create_caption_files_job(req)
+        await manager.run_caption_files_job(state)
+
+        assert state.stats["errors"] == 1
+        assert FakeLLMClient.instances[-1].closed is True
+
+
+class TestRunDeleteFilesJob:
+    def _fake_send2trash(self, monkeypatch, fail_for: set[str] | None = None):
+        fail_for = fail_for or set()
+
+        def fake(path):
+            if path in fail_for:
+                raise OSError(f"simulated failure removing {path}")
+            Path(path).unlink()
+
+        monkeypatch.setattr(jobs_module, "send2trash", fake)
+
+    async def test_removes_exactly_the_given_files(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"a")
+        (tmp_path / "b.jpg").write_bytes(b"b")
+        (tmp_path / "c.jpg").write_bytes(b"c")  # not selected -- must survive
+
+        req = DeleteFilesRequest(paths=[str(tmp_path / "a.jpg"), str(tmp_path / "b.jpg")])
+        state = manager.create_delete_files_job(req)
+        await manager.run_delete_files_job(state)
+
+        assert state.status == "done"
+        assert state.stats["duplicates"] == 2  # reused as the "removed" counter
+        remaining = sorted(p.name for p in tmp_path.glob("*.jpg"))
+        assert remaining == ["c.jpg"]
+
+    async def test_removes_the_orphaned_caption_alongside_its_image(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"a")
+        (tmp_path / "a.txt").write_text("a caption", encoding="utf-8")
+
+        req = DeleteFilesRequest(paths=[str(tmp_path / "a.jpg")])
+        state = manager.create_delete_files_job(req)
+        await manager.run_delete_files_job(state)
+
+        assert not (tmp_path / "a.jpg").exists()
+        assert not (tmp_path / "a.txt").exists()
+
+    async def test_removal_failure_is_counted_as_an_error_and_does_not_stop_the_job(self, manager, monkeypatch, tmp_path):
+        (tmp_path / "a.jpg").write_bytes(b"a")
+        (tmp_path / "b.jpg").write_bytes(b"b")
+        self._fake_send2trash(monkeypatch, fail_for={str(tmp_path / "a.jpg")})
+
+        req = DeleteFilesRequest(paths=[str(tmp_path / "a.jpg"), str(tmp_path / "b.jpg")])
+        state = manager.create_delete_files_job(req)
+        await manager.run_delete_files_job(state)
+
+        assert state.status == "done"
+        assert state.stats["errors"] == 1
+        assert state.stats["duplicates"] == 1
+        assert (tmp_path / "a.jpg").exists()  # the failed removal is still there
+        assert not (tmp_path / "b.jpg").exists()
+
+    async def test_empty_selection_finishes_done_with_a_warning(self, manager, tmp_path):
+        req = DeleteFilesRequest(paths=[])
+        state = manager.create_delete_files_job(req)
+        await manager.run_delete_files_job(state)
+
+        assert state.status == "done"
+        assert any(e.type == "warning" for e in state.events)
+
+    async def test_cancellation_stops_before_removing_more_files(self, manager, monkeypatch, tmp_path):
+        self._fake_send2trash(monkeypatch)
+        (tmp_path / "a.jpg").write_bytes(b"a")
+        (tmp_path / "b.jpg").write_bytes(b"b")
+
+        req = DeleteFilesRequest(paths=[str(tmp_path / "a.jpg"), str(tmp_path / "b.jpg")])
+        state = manager.create_delete_files_job(req)
+        state.cancel_requested = True
+        await manager.run_delete_files_job(state)
+
+        assert state.status == "cancelled"
+        assert (tmp_path / "a.jpg").exists()
+        assert (tmp_path / "b.jpg").exists()
