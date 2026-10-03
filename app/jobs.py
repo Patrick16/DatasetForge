@@ -114,7 +114,12 @@ class JobManager:
             else None
         )
         try:
-            search_provider = build_search_provider(req.search)
+            # to_thread: most providers just set a few attributes here, but
+            # InstagramProvider's constructor reads a session file from disk
+            # -- without this, that blocking I/O runs straight on the shared
+            # event loop, stalling every other job's SSE stream and API
+            # requests for however long the read takes.
+            search_provider = await asyncio.to_thread(build_search_provider, req.search)
             allowed_formats = {f.lower().lstrip(".") for f in req.filters.formats}
             out_root = Path(req.output_folder)
 

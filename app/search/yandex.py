@@ -49,7 +49,13 @@ class YandexProvider:
         headers = {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"}
 
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers=headers, cookies=cookies) as client:
+            # follow_redirects=True: confirmed live (2026-10) that
+            # yandex.com/images/search now 302s to yandex.ru (a geo-redirect)
+            # -- without this, raise_for_status() below treats that 302
+            # itself as a failure and every search comes back empty.
+            async with httpx.AsyncClient(
+                timeout=15.0, headers=headers, cookies=cookies, follow_redirects=True
+            ) as client:
                 page = 0
                 while len(results) < n and page < MAX_PAGES:
                     resp = await client.get(

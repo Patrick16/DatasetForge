@@ -9,11 +9,24 @@ from app.search.yandex import YandexProvider
 _real_async_client = httpx.AsyncClient
 
 
-def patch_async_client(monkeypatch, handler) -> None:
+def patch_async_client(monkeypatch, handler) -> dict:
+    """Returns the kwargs the production code last passed to AsyncClient(),
+    so tests can assert on them directly (e.g. that follow_redirects=True is
+    still being passed) instead of only inferring it indirectly through
+    MockTransport behavior."""
+    captured_kwargs: dict = {}
+
     def fake_async_client(**kwargs):
-        return _real_async_client(transport=httpx.MockTransport(handler), cookies=kwargs.get("cookies"))
+        captured_kwargs.clear()
+        captured_kwargs.update(kwargs)
+        return _real_async_client(
+            transport=httpx.MockTransport(handler),
+            cookies=kwargs.get("cookies"),
+            follow_redirects=kwargs.get("follow_redirects", False),
+        )
 
     monkeypatch.setattr(yandex_module.httpx, "AsyncClient", fake_async_client)
+    return captured_kwargs
 
 
 def page_html(urls: list[str]) -> str:
@@ -120,3 +133,31 @@ class TestYandexProvider:
         patch_async_client(monkeypatch, handler)
         results = await YandexProvider().search("cats", 5)
         assert results == []
+
+    async def test_always_passes_follow_redirects_true(self, monkeypatch):
+        """Guards the fix itself: asserts directly on the kwarg passed to
+        AsyncClient(), so a future refactor that drops follow_redirects=True
+        fails this test even if no test happens to simulate a 302 (the
+        geo-redirect test above only catches it indirectly)."""
+
+        async def handler(request):
+            return httpx.Response(200, text=page_html([]))
+
+        captured = patch_async_client(monkeypatch, handler)
+        await YandexProvider().search("cats", 5)
+        assert captured.get("follow_redirects") is True
+
+    async def test_follows_the_yandex_com_to_yandex_ru_geo_redirect(self, monkeypatch):
+        """Regression test: yandex.com/images/search 302s to yandex.ru
+        (confirmed live, 2026-10) -- without follow_redirects=True, that 302
+        itself trips raise_for_status() and every search silently comes back
+        empty, even though the real content is one hop away."""
+
+        async def handler(request):
+            if request.url.host == "yandex.com":
+                return httpx.Response(302, headers={"location": "https://yandex.ru/images/search?text=cats&p=0"})
+            return httpx.Response(200, text=page_html(["https://example.com/a.jpg"]))
+
+        patch_async_client(monkeypatch, handler)
+        results = await YandexProvider().search("cats", 5)
+        assert [r.url for r in results] == ["https://example.com/a.jpg"]

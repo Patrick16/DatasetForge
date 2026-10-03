@@ -142,8 +142,9 @@ development (2026-09) except where noted:
 | Provider | What it is | SafeSearch mechanism | Notes |
 |---|---|---|---|
 | **DuckDuckGo** (default) | No API key. Under the hood this actually proxies **Bing's** image index (confirmed by inspecting the `ddgs` library's own provider tagging) -- there is no independent DuckDuckGo image index. | `p` query param | The more reliable of the two ways to reach that same Bing data -- Bing's own direct scraping route in `ddgs` ignores the safesearch argument entirely. |
-| **Yandex** | Unofficial scraping of `yandex.com/images`. Historically laxer filtering than Google/Bing. | `family` cookie (`0`=off, `2`=on, unset=default) | Confirmed live: toggling it changed 5/25 results on a borderline query. Width/height aren't extracted from the scrape -- harmless, since every file is re-measured with Pillow after downloading anyway. |
+| **Yandex** | Unofficial scraping of `yandex.com/images`. Historically laxer filtering than Google/Bing. | `family` cookie (`0`=off, `2`=on, unset=default) | Confirmed live: toggling it changed 5/25 results on a borderline query. Width/height aren't extracted from the scrape -- harmless, since every file is re-measured with Pillow after downloading anyway. `yandex.com` now 302-redirects to `yandex.ru` (a geo-redirect) -- fixed 2026-10 by following redirects; this had silently broken every Yandex search (zero results) until then. |
 | **Google** (experimental) | Unofficial scraping. | `safe` query param | ⚠️ Confirmed unreliable in testing: Google returned an HTTP 429 bot-check on the *first* request, with full browser-like headers and no prior history. Expect frequent zero results; a block degrades to "0 found" plus a log warning, not a crash. Try Yandex or DuckDuckGo instead if this keeps failing for you. |
+| **Instagram profile** (experimental) | Not a search at all -- each line in the queries box is a profile URL, `@handle`, or bare username, and every image from that profile's posts is downloaded (up to "images per query"). Carousel posts contribute every image inside them; video posts are skipped entirely. | n/a (ignored) | Via [`instaloader`](https://instaloader.github.io/). **Needs a logged-in session**, see below -- confirmed live (2026-10) that anonymous access is a dead end, not just unreliable. |
 | **Booru board** | Danbooru-API-family boards, for tag-driven / anime-style datasets. | An explicit `rating:` tag, not a hidden toggle -- content is opt-in tagged (general/sensitive/questionable/explicit; naming varies by board) rather than filtered by a black-box heuristic. | See below -- access requirements vary a lot by board. |
 
 ### Booru board access (confirmed live, 2026-09)
@@ -159,6 +160,42 @@ development (2026-09) except where noted:
   Implemented, but best-effort -- it may just not work for you. Also:
   anonymous Danbooru API access is limited to 2 combined tags, which a
   multi-word query plus the rating tag can easily exceed.
+
+### Instagram profile access
+
+Confirmed live (2026-10) that there is no working anonymous path anymore:
+
+- The JSON API Instagram's own web app calls for profile data returned
+  **HTTP 429 on the very first request** from a fresh process -- no warm-up,
+  no retries, immediate rate-limit.
+- The profile page's raw HTML has **no post data left in it** to scrape
+  either -- it's a client-rendered React shell now (confirmed: no
+  `_sharedData`, no `edge_owner_to_timeline_media`, not even an `og:image`
+  meta tag). The old "just regex the embedded JSON" trick other scrapers in
+  this app use (Yandex) stopped being possible for Instagram years ago.
+
+So this provider needs a **logged-in `instaloader` session** to do anything
+useful:
+
+1. In a terminal (with this project's venv active, so the `instaloader` CLI
+   that comes with the `instaloader` package is on PATH), run:
+   ```bash
+   instaloader --login=your_instagram_username
+   ```
+   This handles any 2FA/checkpoint prompt interactively and saves a session
+   file -- by default at `%LOCALAPPDATA%\Instaloader\session-your_instagram_username`
+   on Windows (`~/.config/instaloader/session-...` on Linux/Mac).
+2. In the UI's Instagram block, enter that same username. Leave **Session
+   file** blank to use instaloader's own default path, or point it at the
+   file explicitly if you moved/renamed it.
+3. This app only ever *loads* that saved session file -- it never sees or
+   sends your raw password, and the password itself is typed into
+   `instaloader`'s own CLI prompt, not this app.
+
+Without a session, requests run anonymously and will essentially always hit
+the 429 above. A missing/invalid session file fails the whole job immediately
+with a clear error (rather than silently returning 0 images), telling you
+the exact `instaloader --login=...` command to run.
 
 To add another search source, implement `ImageSearchProvider.search()` under
 `app/search/` and register it in `build_search_provider()` in
@@ -292,6 +329,7 @@ app/
     duckduckgo.py    # DuckDuckGo search (no API key)
     yandex.py        # Yandex Images scraping
     google.py        # Google Images scraping (experimental, unreliable)
+    instagram.py     # Instagram profile downloads via instaloader (experimental, anonymous only)
     booru.py         # Danbooru/e621/Gelbooru/Rule34
 static/
   index.html, style.css, app.js   # web UI, no build step

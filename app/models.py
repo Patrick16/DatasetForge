@@ -75,19 +75,37 @@ class SearchConfig(BaseModel):
     - yandex: unofficial scraping, historically laxer filtering than DDG/Google.
     - google: unofficial scraping -- confirmed unreliable in testing (Google
       blocks plain HTTP scraping aggressively); expect frequent zero results.
+    - instagram: downloads images from public profiles instead of searching
+      by keyword -- each line in the queries box is a profile URL/@handle/
+      username instead of a search term. Needs a logged-in `instaloader`
+      session: confirmed live that both the anonymous API Instagram's own
+      web app calls, and plain HTML scraping of the profile page (no
+      embedded post data left in the markup -- it's a client-rendered shell
+      now), are dead ends -- the API returned HTTP 429 on the very first
+      request from a fresh process. `instagram_username` + optionally
+      `instagram_session_file` point at a session created once via
+      `instaloader --login=<username>` in a terminal; without a session,
+      requests are anonymous and essentially guaranteed to be rate-limited.
+      `filters.safesearch` has no Instagram equivalent and is ignored.
     - booru: Danbooru-API-family boards (e621/gelbooru/rule34/danbooru).
       Content is explicitly rating-tagged rather than hidden behind a
       SafeSearch toggle, so `filters.safesearch` maps onto a rating: tag
       instead of a provider-side filter flag.
     """
 
-    provider: Literal["duckduckgo", "yandex", "google", "booru"] = "duckduckgo"
+    provider: Literal["duckduckgo", "yandex", "google", "instagram", "booru"] = "duckduckgo"
     booru_site: Literal["e621", "gelbooru", "rule34", "danbooru"] = "e621"
     # gelbooru/rule34 use an api_key + user_id pair; danbooru uses login + api_key
     # (as HTTP Basic Auth). e621 needs none of these.
     booru_api_key: Optional[str] = None
     booru_user_id: Optional[str] = None
     booru_login: Optional[str] = None
+    # The Instagram account whose session to load (the session file itself holds
+    # the actual login cookies -- never a raw password, see InstagramProvider).
+    # If instagram_session_file is left unset, instaloader's own default path
+    # for this username is used (same path `instaloader --login=...` writes to).
+    instagram_username: Optional[str] = None
+    instagram_session_file: Optional[str] = None
 
 
 class JobCreateRequest(BaseModel):

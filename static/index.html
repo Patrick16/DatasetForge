@@ -39,12 +39,12 @@
       <form id="job-form">
         <section class="rail-section">
           <p class="eyebrow">Download</p>
-          <label for="queries">Search queries (one per line)</label>
+          <label for="queries" id="queries-label">Search queries (one per line)</label>
           <textarea id="queries" class="queries-input" rows="4" placeholder="cat on a windowsill&#10;mountains at sunset&#10;coffee cup on a table" required></textarea>
 
           <div class="row">
             <div class="field">
-              <label for="n_per_query">Images per query</label>
+              <label for="n_per_query" id="n_per_query-label">Images per query</label>
               <input type="number" id="n_per_query" value="10" min="1" max="200" required />
             </div>
             <div class="field">
@@ -55,7 +55,7 @@
 
           <label class="checkbox-row">
             <input type="checkbox" id="query_subfolders" checked />
-            Create a subfolder for each query
+            <span id="query_subfolders-label">Create a subfolder for each query</span>
           </label>
 
           <div class="btn-stack">
@@ -161,6 +161,7 @@
               <option value="duckduckgo">DuckDuckGo (default)</option>
               <option value="yandex">Yandex Images</option>
               <option value="google">Google Images (experimental)</option>
+              <option value="instagram">Instagram profile (experimental)</option>
               <option value="booru">Booru board</option>
             </select>
             <p class="hint-text" id="search-provider-note"></p>
@@ -191,6 +192,18 @@
               <input type="text" id="booru_login" placeholder="your danbooru username" />
             </div>
             <p class="hint-text">e621 needs no setup. Gelbooru/Rule34: free account &rarr; Account &rarr; API Access Credentials. Danbooru: login + API key -- but even authenticated requests hit a Cloudflare bot-check on some networks, so treat it as best-effort.</p>
+          </div>
+
+          <div id="instagram_block" class="llm-block">
+            <div class="field">
+              <label>Instagram username <span class="optional">(the account whose session to use)</span></label>
+              <input type="text" id="instagram_username" placeholder="your_instagram_username" />
+            </div>
+            <div class="field">
+              <label>Session file <span class="optional">(optional -- defaults to instaloader's own path for that username)</span></label>
+              <input type="text" id="instagram_session_file" placeholder="e.g. C:\Users\you\AppData\Local\Instaloader\session-your_instagram_username" />
+            </div>
+            <p class="hint-text">Needs a logged-in session -- run <code>instaloader --login=your_instagram_username</code> once in a terminal (handles 2FA/checkpoint prompts), then just put that username above and leave the session file blank. Without a session, requests are anonymous and effectively guaranteed to be rate-limited (confirmed live: an immediate HTTP 429 on the very first request).</p>
           </div>
 
           <div class="row">

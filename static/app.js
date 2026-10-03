@@ -59,13 +59,42 @@ const SEARCH_PROVIDER_NOTES = {
   duckduckgo: "No configuration needed. Effectively proxies Bing's image index.",
   yandex: "Unofficial scraping (like DuckDuckGo) -- can break if Yandex changes their page markup. Historically laxer SafeSearch than Google/Bing.",
   google: "⚠️ Unofficial scraping -- confirmed unreliable in testing (Google blocked requests almost immediately, even with full browser headers). Expect frequent zero results; try Yandex or DuckDuckGo instead if this keeps failing.",
+  instagram: "⚠️ Each line is a profile URL, @handle, or username instead of a search term -- downloads images from that profile's posts (videos skipped). Needs a logged-in session (see below) -- confirmed live that anonymous requests get an immediate HTTP 429, no warm-up.",
   booru: "Content is explicitly rating-tagged rather than hidden behind a SafeSearch toggle -- see board options below.",
+};
+
+// Instagram repurposes the queries box as a list of profiles, not search
+// terms -- these labels/placeholder read oddly otherwise ("images per
+// query" for a profile download, etc). One dict per provider (falling back
+// to "default"), same pattern as SEARCH_PROVIDER_NOTES above, so a future
+// provider that also repurposes the queries box is a new entry here instead
+// of a new parallel dict + ternary.
+const PROVIDER_FORM_TEXT = {
+  default: {
+    queries: "Search queries (one per line)",
+    n_per_query: "Images per query",
+    query_subfolders: "Create a subfolder for each query",
+    placeholder: "cat on a windowsill\nmountains at sunset\ncoffee cup on a table",
+  },
+  instagram: {
+    queries: "Profile URLs, @handles, or usernames (one per line)",
+    n_per_query: "Images per profile",
+    query_subfolders: "Create a subfolder for each profile",
+    placeholder: "https://instagram.com/some_public_account\n@another_account\nbare_username",
+  },
 };
 
 function syncSearchProviderUI() {
   const provider = $("search_provider").value;
   $("booru_block").classList.toggle("disabled", provider !== "booru");
+  $("instagram_block").classList.toggle("disabled", provider !== "instagram");
   $("search-provider-note").textContent = SEARCH_PROVIDER_NOTES[provider] || "";
+
+  const text = PROVIDER_FORM_TEXT[provider] || PROVIDER_FORM_TEXT.default;
+  $("queries-label").textContent = text.queries;
+  $("n_per_query-label").textContent = text.n_per_query;
+  $("query_subfolders-label").textContent = text.query_subfolders;
+  $("queries").placeholder = text.placeholder;
 }
 $("search_provider").addEventListener("change", syncSearchProviderUI);
 syncSearchProviderUI();
@@ -213,6 +242,7 @@ const STORAGE_KEY = "datasetforge:form";
 const FIELD_IDS = [
   "queries", "n_per_query", "concurrency", "query_subfolders",
   "search_provider", "booru_site", "booru_api_key", "booru_user_id", "booru_login",
+  "instagram_username", "instagram_session_file",
   "min_width", "min_height", "safesearch",
   "llm_enabled", "llm_provider", "llm_variations", "llm_base_url", "llm_model", "llm_api_key", "llm_timeout", "llm_models_folder", "llm_disable_reasoning",
   "cap_enabled", "cap_method", "cap_provider", "cap_model", "cap_base_url", "cap_api_key", "cap_timeout", "cap_models_folder", "cap_disable_reasoning",
@@ -672,6 +702,8 @@ function buildRequest() {
       booru_api_key: $("booru_api_key").value.trim() || null,
       booru_user_id: $("booru_user_id").value.trim() || null,
       booru_login: $("booru_login").value.trim() || null,
+      instagram_username: $("instagram_username").value.trim() || null,
+      instagram_session_file: $("instagram_session_file").value.trim() || null,
     },
     // Query expansion, if enabled, already ran client-side (generateQueries())
     // and its results are baked into `queries` above -- the backend must not
